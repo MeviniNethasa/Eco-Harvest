@@ -2,23 +2,30 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  BulkMatchItem,
+  BulkMatchResult,
+  BulkSubscription,
+  BulkTierInfo,
   CartItem,
   CourierInfo,
   Crop,
   DeliveryStatus,
   DeliveryTrackingData,
+  ExtractedListItem,
   FarmGroup,
   GeoCoordinate,
   Order,
   OrderStatus,
   OrderSummary,
   PaymentDetails,
+  UnavailableListItem,
 } from '../types';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
 const ORDERS_STORAGE_KEY = '@ecoharvest/orders';
 const TRACKING_STORAGE_KEY = '@ecoharvest/delivery-tracking';
+const SUBSCRIPTIONS_STORAGE_KEY = '@ecoharvest/bulk-subscriptions';
 
 /**
  * Simple pub/sub (same pattern as the crop listeners further down) so the
@@ -828,4 +835,370 @@ export async function simulateCourierMovement(
   await saveAllTracking(updatedAll);
   notifyTrackingListeners(orderId, updatedTracking);
   return updatedTracking;
+}
+
+// ---------------------------------------------------------------------------
+// Screen M-05: AI Bulk Orders Engine (Subscribed Customer Workspace)
+// ---------------------------------------------------------------------------
+
+/**
+ * Same pub/sub pattern as `subscribeToCart` / `subscribeToCrops` above, so
+ * e.g. a future "Active Contracts" badge can update live when
+ * BulkOrdersScreen locks or the Section 4.5 sandbox toggles a contract.
+ */
+type SubscriptionListener = (subs: BulkSubscription[]) => void;
+const subscriptionListeners = new Set<SubscriptionListener>();
+
+function notifySubscriptionListeners(subs: BulkSubscription[]): void {
+  subscriptionListeners.forEach((listener) => listener(subs));
+}
+
+export function subscribeToSubscriptions(listener: SubscriptionListener): () => void {
+  subscriptionListeners.add(listener);
+  return () => subscriptionListeners.delete(listener);
+}
+
+/**
+ * Retrieve all bulk subscription contracts from AsyncStorage.
+ */
+export async function getSubscriptions(): Promise<BulkSubscription[]> {
+  try {
+    const raw = await AsyncStorage.getItem(SUBSCRIPTIONS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as BulkSubscription[]) : [];
+  } catch (error) {
+    console.error('Failed to read bulk subscriptions from storage:', error);
+    return [];
+  }
+}
+
+async function saveAllSubscriptions(subs: BulkSubscription[]): Promise<void> {
+  await AsyncStorage.setItem(SUBSCRIPTIONS_STORAGE_KEY, JSON.stringify(subs));
+  notifySubscriptionListeners(subs);
+}
+
+/**
+ * Upserts a single bulk subscription contract (Section 4.4's
+ * "[ Lock Bulk Subscription Contract ]" CTA, and the Section 4.5 sandbox's
+ * "[ Toggle Contract State ]" control). Matches by `id` — an existing id
+ * updates that record in place (e.g. flipping `status` between
+ * `'DRAFT'`/`'ACTIVE'`), anything else is prepended as a new contract.
+ */
+export async function saveSubscription(
+  sub: BulkSubscription
+): Promise<BulkSubscription[]> {
+  const existing = await getSubscriptions();
+  const index = existing.findIndex((s) => s.id === sub.id);
+  const updated =
+    index >= 0
+      ? existing.map((s, i) => (i === index ? sub : s))
+      : [sub, ...existing];
+
+  await saveAllSubscriptions(updated);
+  return updated;
+}
+
+/**
+ * Removes a bulk subscription contract entirely.
+ */
+export async function removeSubscription(
+  subscriptionId: string
+): Promise<BulkSubscription[]> {
+  const existing = await getSubscriptions();
+  const updated = existing.filter((s) => s.id !== subscriptionId);
+  await saveAllSubscriptions(updated);
+  return updated;
+}
+
+/**
+ * Generates a reasonably unique subscription id, same approach as
+ * `generateCropId` / `generateOrderId` above.
+ */
+export function generateSubscriptionId(): string {
+  return `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * The Tiered Volume Pricing Matrix (design.md Section 4.2) as a client-side
+ * rule table — no backend/API call needed. Rates and thresholds match the
+ * spec's worked example exactly.
+ */
+const BULK_TIERS: BulkTierInfo[] = [
+  { tier: 1, label: 'Tier 1', minKg: 50, maxKg: 99, pricePerKg: 360, discountPercentage: 0 },
+  { tier: 2, label: 'Tier 2', minKg: 100, maxKg: 249, pricePerKg: 335, discountPercentage: 12 },
+  { tier: 3, label: 'Tier 3', minKg: 250, maxKg: null, pricePerKg: 305, discountPercentage: 20 },
+];
+
+/**
+ * Below the 50kg bulk minimum, volume doesn't qualify for a discounted rate
+ * yet — returned as a synthetic `tier: 0` row priced at the standard
+ * (Tier 1) rate so the UI always has a `pricePerKg` to render against.
+ */
+const BELOW_MINIMUM_TIER: BulkTierInfo = {
+  tier: 0,
+  label: 'Below Bulk Minimum',
+  minKg: 0,
+  maxKg: 49,
+  pricePerKg: BULK_TIERS[0].pricePerKg,
+  discountPercentage: 0,
+};
+
+/**
+ * Client-side rule engine (no external API) mapping a weekly volume (kg)
+ * onto its active pricing tier — the Interactive Volume Slider's real-time
+ * lookup in Section 4.2, and the source of truth for `selectedTier` /
+ * `discountPercentage` on a saved `BulkSubscription`.
+ */
+export function calculateBulkTier(volumeKg: number): BulkTierInfo {
+  const safeVolume =
+    typeof volumeKg === 'number' && Number.isFinite(volumeKg) && volumeKg > 0
+      ? volumeKg
+      : 0;
+
+  if (safeVolume >= BULK_TIERS[2].minKg) return BULK_TIERS[2];
+  if (safeVolume >= BULK_TIERS[1].minKg) return BULK_TIERS[1];
+  if (safeVolume >= BULK_TIERS[0].minKg) return BULK_TIERS[0];
+  return BELOW_MINIMUM_TIER;
+}
+
+/**
+ * Per-business-type kg/week multipliers used by the AI Demand Estimator
+ * (Section 4.1) to turn a simple input — guest covers, weekly footfall, or
+ * processing batches, depending on `businessType` — into a recommended
+ * weekly crop volume. Purely a local heuristic; no network call.
+ */
+const AI_DEMAND_MULTIPLIER_KG: Record<BulkSubscription['businessType'], number> = {
+  RESTAURANT: 0.6, // ~0.6kg produce per weekly guest cover
+  RETAILER: 0.15, // ~0.15kg per weekly customer footfall unit
+  PROCESSOR: 2.5, // ~2.5kg per weekly processing batch/unit
+};
+
+/**
+ * Computes the AI Demand Estimator's recommended weekly volume (Section
+ * 4.1's "AI Demand Estimator Input ... yielding automated crop quantity
+ * recommendations"), rounded to the nearest whole kg. Returns 0 for a
+ * non-positive/invalid input rather than throwing.
+ */
+export function estimateWeeklyVolumeKg(
+  businessType: BulkSubscription['businessType'],
+  inputUnits: number
+): number {
+  const safeUnits =
+    typeof inputUnits === 'number' && Number.isFinite(inputUnits) && inputUnits > 0
+      ? inputUnits
+      : 0;
+  const multiplier = AI_DEMAND_MULTIPLIER_KG[businessType] ?? AI_DEMAND_MULTIPLIER_KG.RESTAURANT;
+  return Math.round(safeUnits * multiplier);
+}
+
+// ---------------------------------------------------------------------------
+// Screen M-05: Handwritten Bulk Requirement List — OCR + Verified Matching
+// ---------------------------------------------------------------------------
+
+/**
+ * A small built-in pool of SLSI-Verified (and, for one entry, deliberately
+ * unverified) demo crops. This is layered underneath the real published
+ * catalog (see `matchHandwrittenListToVerifiedFarmers` below) purely so the
+ * Section 4's sandbox presets — and any early-stage catalog with few or no
+ * published crops — still produce a full available/unavailable breakdown
+ * end-to-end, without depending on what's actually been published via
+ * Screen M-02. Real published crops are always checked first/in addition.
+ */
+const DEMO_VERIFIED_CROP_POOL: Crop[] = [
+  {
+    id: 'demo_verified_carrot',
+    name: 'Carrot',
+    category: 'Vegetables',
+    pricePerUnit: 180,
+    unit: '1kg',
+    imageUrl: '',
+    isSLSIVerified: true,
+    farmName: 'Nuwara Eliya Organic Farm',
+    province: 'Central',
+    district: 'Nuwara Eliya',
+    city: 'Nuwara Eliya',
+    availableQtyKg: 300,
+  },
+  {
+    id: 'demo_verified_leek',
+    name: 'Leek',
+    category: 'Vegetables',
+    pricePerUnit: 220,
+    unit: '1kg',
+    imageUrl: '',
+    isSLSIVerified: true,
+    farmName: 'Bandarawela Green Farms',
+    province: 'Uva',
+    district: 'Badulla',
+    city: 'Bandarawela',
+    availableQtyKg: 150,
+  },
+  {
+    id: 'demo_verified_potato',
+    name: 'Potato',
+    category: 'Vegetables',
+    pricePerUnit: 165,
+    unit: '1kg',
+    imageUrl: '',
+    isSLSIVerified: true,
+    farmName: 'Welimada Farmers Collective',
+    province: 'Uva',
+    district: 'Badulla',
+    city: 'Welimada',
+    availableQtyKg: 500,
+  },
+  // Intentionally unverified, so a request like "Organic Beetroot" name-
+  // matches this listing but is correctly routed to unavailableItems with
+  // an "unverified" reason rather than silently passing.
+  {
+    id: 'demo_unverified_beetroot',
+    name: 'Beetroot',
+    category: 'Vegetables',
+    pricePerUnit: 140,
+    unit: '1kg',
+    imageUrl: '',
+    isSLSIVerified: false,
+    farmName: 'Riverside Smallholding (Unverified)',
+    province: 'Central',
+    district: 'Kandy',
+    city: 'Kandy',
+    availableQtyKg: 80,
+  },
+];
+
+/**
+ * Client-side matching engine for Screen M-05's handwritten bulk list
+ * workflow. For each parsed line item:
+ *   1. Name-matches against the live crop catalog + `DEMO_VERIFIED_CROP_POOL`
+ *      (case-insensitive, either direction — e.g. "Organic Beetroot" matches
+ *      a catalog crop named "Beetroot").
+ *   2. Requires `isSLSIVerified === true` — any name match that's only
+ *      unverified is rejected with an explanatory reason, never silently
+ *      substituted.
+ *   3. Requires `availableQtyKg >= requestedQtyKg` where stock is tracked;
+ *      crops with no `availableQtyKg` set are treated as unconstrained
+ *      demo stock rather than "0kg available" (see the field's doc comment
+ *      in types/index.ts).
+ *   4. Among multiple verified, in-stock matches, picks the cheapest
+ *      `pricePerUnit` for the customer.
+ * No network/API calls — everything runs against data already in storage.
+ */
+export async function matchHandwrittenListToVerifiedFarmers(
+  items: ExtractedListItem[]
+): Promise<BulkMatchResult> {
+  const liveCrops = await getCrops();
+  const pool = [...liveCrops, ...DEMO_VERIFIED_CROP_POOL];
+
+  const availableItems: BulkMatchItem[] = [];
+  const unavailableItems: UnavailableListItem[] = [];
+
+  for (const item of items) {
+    const needle = (item.cropName ?? '').trim().toLowerCase();
+    const requestedQtyKg =
+      typeof item.requestedQtyKg === 'number' && item.requestedQtyKg > 0
+        ? item.requestedQtyKg
+        : 0;
+
+    if (!needle || requestedQtyKg <= 0) {
+      continue; // skip blank/incomplete rows rather than reporting them
+    }
+
+    const nameMatches = pool.filter((crop) => {
+      const cropName = crop.name.trim().toLowerCase();
+      return cropName.length > 0 && (needle.includes(cropName) || cropName.includes(needle));
+    });
+
+    if (nameMatches.length === 0) {
+      unavailableItems.push({
+        requestedItem: item.cropName,
+        requestedQtyKg,
+        reason: `No SLSI-Verified farmer currently lists "${item.cropName}".`,
+      });
+      continue;
+    }
+
+    const verifiedMatches = nameMatches.filter((crop) => crop.isSLSIVerified === true);
+    if (verifiedMatches.length === 0) {
+      unavailableItems.push({
+        requestedItem: item.cropName,
+        requestedQtyKg,
+        reason: `Only unverified listings found for "${item.cropName}" — SLSI-Verified stock required.`,
+      });
+      continue;
+    }
+
+    const inStockMatches = verifiedMatches.filter((crop) => {
+      const stock = typeof crop.availableQtyKg === 'number' ? crop.availableQtyKg : Infinity;
+      return stock >= requestedQtyKg;
+    });
+
+    if (inStockMatches.length === 0) {
+      const closest = verifiedMatches.reduce((best, crop) =>
+        (crop.availableQtyKg ?? 0) > (best.availableQtyKg ?? 0) ? crop : best
+      );
+      unavailableItems.push({
+        requestedItem: item.cropName,
+        requestedQtyKg,
+        reason: `Verified stock insufficient (${closest.availableQtyKg ?? 0}kg available, ${requestedQtyKg}kg requested).`,
+      });
+      continue;
+    }
+
+    const best = inStockMatches.reduce((cheapest, crop) =>
+      crop.pricePerUnit <= cheapest.pricePerUnit ? crop : cheapest
+    );
+
+    availableItems.push({
+      cropId: best.id,
+      cropName: best.name,
+      requestedQtyKg,
+      pricePerKg: best.pricePerUnit,
+      totalPrice: Math.round(best.pricePerUnit * requestedQtyKg),
+      farmerName: best.farmName,
+      isVerified: true,
+    });
+  }
+
+  const grandTotal = availableItems.reduce((sum, i) => sum + i.totalPrice, 0);
+  return { availableItems, unavailableItems, grandTotal };
+}
+
+/**
+ * Adds a matched bulk list's `availableItems` straight into the shared cart
+ * (the same `@ecoharvest/cart` storage Screen M-03's CartScreen reads from),
+ * so "Proceed to Bulk Checkout" can hand off to the existing checkout flow
+ * instead of duplicating payment logic. Matches the existing `addToCart`
+ * merge-by-id behavior: an item already in the cart has its quantity
+ * increased rather than duplicated.
+ */
+export async function addBulkMatchItemsToCart(
+  items: BulkMatchItem[]
+): Promise<CartItem[]> {
+  const cart = await getCart();
+  const next = [...cart];
+
+  for (const item of items) {
+    const existingIndex = next.findIndex((c) => c.cropId === item.cropId);
+    if (existingIndex >= 0) {
+      next[existingIndex] = {
+        ...next[existingIndex],
+        quantity: next[existingIndex].quantity + item.requestedQtyKg,
+      };
+    } else {
+      next.push({
+        cropId: item.cropId,
+        name: item.cropName,
+        pricePerUnit: item.pricePerKg,
+        unit: '1kg',
+        quantity: item.requestedQtyKg,
+        imageUrl: '',
+        farmName: item.farmerName,
+        province: 'Unknown',
+        district: 'Unknown',
+        city: 'Unknown',
+      });
+    }
+  }
+
+  await saveCart(next);
+  return next;
 }

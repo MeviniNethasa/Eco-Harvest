@@ -14,6 +14,7 @@ import FarmerOnboardingScreen from '../screens/FarmerOnboardingScreen';
 import CartScreen from '../screens/CartScreen';
 import OrdersScreen from '../screens/OrdersScreen';
 import DeliveryTrackingScreen from '../screens/DeliveryTrackingScreen';
+import BulkOrdersScreen from '../screens/BulkOrdersScreen';
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
@@ -183,6 +184,16 @@ export default function TabNavigator() {
           options={{
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="receipt-outline" size={size} color={color} />
+            ),
+          }}
+        />
+        {/* Screen M-05: AI Bulk Orders Engine (Subscribed Customer Workspace). */}
+        <Tab.Screen
+          name="Bulk"
+          component={BulkOrdersScreen}
+          options={{
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="cube-outline" size={size} color={color} />
             ),
           }}
         />
