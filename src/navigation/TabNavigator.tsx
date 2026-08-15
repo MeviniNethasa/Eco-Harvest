@@ -1,19 +1,19 @@
 // src/navigation/TabNavigator.tsx
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { NavigationContainer, useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
+import { NavigationContainer, useIsFocused, useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { CartStackParamList, RootTabParamList } from '../types';
-import { getCartCount, subscribeToCart, getOrderById } from '../utils/storage';
+import { CartStackParamList, OrdersStackParamList, RootTabParamList } from '../types';
+import { getCartCount, subscribeToCart } from '../utils/storage';
 import MarketplaceScreen from '../screens/MarketplaceScreen';
 import FarmerOnboardingScreen from '../screens/FarmerOnboardingScreen';
 import CartScreen from '../screens/CartScreen';
 import OrdersScreen from '../screens/OrdersScreen';
+import DeliveryTrackingScreen from '../screens/DeliveryTrackingScreen';
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
@@ -29,47 +29,11 @@ const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
 
 // --- Cart (Screen M-03 -> Screen M-04) ---
 //
-// The Cart tab gets its own stack, mirroring the Profile tab's pattern, so
-// a successful Stripe test payment on Screen M-03 (CartScreen) can push
-// into Screen M-04 (Uber Sandbox Live Delivery Tracking) with the new
-// order's id, per design.md Section 4.4.
+// The Cart tab gets its own stack so a successful Stripe test payment on
+// Screen M-03 (CartScreen) can push into Screen M-04 (Uber Sandbox Live
+// Delivery Tracking) with the new order's id, per design.md Section 4.4.
 
 const CartStack = createNativeStackNavigator<CartStackParamList>();
-
-type OrderTrackingRouteProp = RouteProp<CartStackParamList, 'OrderTracking'>;
-
-// Placeholder for Screen M-04 (Uber Sandbox Live Delivery Tracking).
-// Replace this component with the real M-04 implementation when it's
-// built; it already receives the correct `orderId` param from checkout.
-function OrderTrackingScreen() {
-  const route = useRoute<OrderTrackingRouteProp>();
-  const { orderId } = route.params;
-  const [grandTotal, setGrandTotal] = useState<number | null>(null);
-
-  useEffect(() => {
-    getOrderById(orderId).then((order) => {
-      if (order) setGrandTotal(order.summary.grandTotal);
-    });
-  }, [orderId]);
-
-  return (
-    <View style={styles.placeholder}>
-      <Ionicons name="checkmark-circle" size={48} color="#15803D" />
-      <Text style={[styles.placeholderText, { marginTop: 12 }]}>
-        Order Placed
-      </Text>
-      <Text style={styles.orderTrackingSubtext}>Order #{orderId}</Text>
-      {grandTotal !== null && (
-        <Text style={styles.orderTrackingSubtext}>
-          LKR {grandTotal.toLocaleString('en-LK')} paid via Stripe (test mode)
-        </Text>
-      )}
-      <Text style={[styles.orderTrackingSubtext, { marginTop: 8 }]}>
-        Live delivery tracking (Screen M-04) goes here.
-      </Text>
-    </View>
-  );
-}
 
 function CartStackNavigator() {
   return (
@@ -77,14 +41,36 @@ function CartStackNavigator() {
       <CartStack.Screen name="CartHome" component={CartScreen} />
       <CartStack.Screen
         name="OrderTracking"
-        component={OrderTrackingScreen}
+        component={DeliveryTrackingScreen}
         options={{ headerShown: true, title: 'Delivery Tracking' }}
       />
     </CartStack.Navigator>
   );
 }
 
-// --- Profile (now the entry point into the Farmer Portal / Screen M-02) ---
+// --- Orders (Orders tab -> Screen M-04) ---
+//
+// Same pattern as the Cart stack above: the Orders tab gets its own stack
+// so tapping "Track Delivery" on an active order (OrdersScreen) can push
+// into the same Screen M-04 implementation, keyed by orderId, without any
+// cross-tab navigation workarounds.
+
+const OrdersStack = createNativeStackNavigator<OrdersStackParamList>();
+
+function OrdersStackNavigator() {
+  return (
+    <OrdersStack.Navigator screenOptions={{ headerShown: false }}>
+      <OrdersStack.Screen name="OrdersHome" component={OrdersScreen} />
+      <OrdersStack.Screen
+        name="OrderTracking"
+        component={DeliveryTrackingScreen}
+        options={{ headerShown: true, title: 'Delivery Tracking' }}
+      />
+    </OrdersStack.Navigator>
+  );
+}
+
+// --- Profile (entry point into the Farmer Portal / Screen M-02) ---
 
 type ProfileNavProp = NativeStackNavigationProp<ProfileStackParamList, 'ProfileHome'>;
 
@@ -188,9 +174,12 @@ export default function TabNavigator() {
             ),
           }}
         />
+        {/* Nested stack so the Orders tab can push into Screen M-04 (Track
+            Delivery) while RootTabParamList's own "Orders: undefined" entry
+            (src/types/index.ts) stays untouched. */}
         <Tab.Screen
           name="Orders"
-          component={OrdersScreen}
+          component={OrdersStackNavigator}
           options={{
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="receipt-outline" size={size} color={color} />
@@ -237,21 +226,10 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     letterSpacing: 0.5,
   },
-  placeholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FAFAFA',
-  },
   placeholderText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#111827',
-  },
-  orderTrackingSubtext: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginTop: 4,
   },
   profileContainer: {
     flex: 1,

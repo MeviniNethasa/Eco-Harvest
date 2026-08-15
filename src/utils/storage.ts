@@ -3,9 +3,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   CartItem,
+  CourierInfo,
   Crop,
+  DeliveryStatus,
+  DeliveryTrackingData,
   FarmGroup,
+  GeoCoordinate,
   Order,
+  OrderStatus,
   OrderSummary,
   PaymentDetails,
 } from '../types';
@@ -13,6 +18,7 @@ import {
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
 const ORDERS_STORAGE_KEY = '@ecoharvest/orders';
+const TRACKING_STORAGE_KEY = '@ecoharvest/delivery-tracking';
 
 /**
  * Simple pub/sub (same pattern as the crop listeners further down) so the
@@ -539,4 +545,287 @@ export async function createOrder(payment: PaymentDetails): Promise<Order> {
   await clearCart();
 
   return order;
+}
+
+// ---------------------------------------------------------------------------
+// Delivery tracking (Screen M-04: Uber Developer Sandbox Live Delivery Tracking)
+// ---------------------------------------------------------------------------
+
+type TrackingMap = Record<string, DeliveryTrackingData>;
+
+/**
+ * Per-order pub/sub (rather than one global listener set like cart/crops/
+ * orders above) since DeliveryTrackingScreen only ever cares about a single
+ * `orderId` at a time and re-rendering on unrelated orders' sandbox
+ * transitions would be wasted work.
+ */
+type TrackingListener = (tracking: DeliveryTrackingData) => void;
+const trackingListeners = new Map<string, Set<TrackingListener>>();
+
+function notifyTrackingListeners(orderId: string, tracking: DeliveryTrackingData): void {
+  trackingListeners.get(orderId)?.forEach((listener) => listener(tracking));
+}
+
+/**
+ * Subscribe to live sandbox tracking updates for one order. Returns an
+ * unsubscribe function.
+ */
+export function subscribeToTracking(
+  orderId: string,
+  listener: TrackingListener
+): () => void {
+  if (!trackingListeners.has(orderId)) {
+    trackingListeners.set(orderId, new Set());
+  }
+  trackingListeners.get(orderId)!.add(listener);
+  return () => {
+    trackingListeners.get(orderId)?.delete(listener);
+  };
+}
+
+async function getAllTracking(): Promise<TrackingMap> {
+  try {
+    const raw = await AsyncStorage.getItem(TRACKING_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as TrackingMap) : {};
+  } catch (error) {
+    console.error('Failed to read delivery tracking from storage:', error);
+    return {};
+  }
+}
+
+async function saveAllTracking(map: TrackingMap): Promise<void> {
+  try {
+    await AsyncStorage.setItem(TRACKING_STORAGE_KEY, JSON.stringify(map));
+  } catch (error) {
+    console.error('Failed to save delivery tracking to storage:', error);
+  }
+}
+
+// Colombo-area fallback origin. Used whenever we don't have real geocoding
+// for a farm/buyer address (this is a sandbox/demo, not a real routing
+// integration), so the map always centers somewhere sane instead of (0, 0).
+const FALLBACK_ORIGIN: GeoCoordinate = { latitude: 6.9271, longitude: 79.8612 };
+
+function hashString(value: string): number {
+  let hash = 0;
+  const safe = typeof value === 'string' && value.length > 0 ? value : 'fallback-seed';
+  for (let i = 0; i < safe.length; i++) {
+    hash = (hash * 31 + safe.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+/**
+ * Deterministic mock coordinate ~0-5km around FALLBACK_ORIGIN, derived from
+ * a seed string, so the same order always renders the same farm/buyer pins
+ * without a real geocoding integration.
+ */
+function deterministicCoordinate(seed: string): GeoCoordinate {
+  const hash = hashString(seed);
+  const latOffset = ((hash % 1000) / 1000 - 0.5) * 0.08; // +/- ~4.4km
+  const lngOffset = (((hash >>> 10) % 1000) / 1000 - 0.5) * 0.08;
+  return {
+    latitude: FALLBACK_ORIGIN.latitude + latOffset,
+    longitude: FALLBACK_ORIGIN.longitude + lngOffset,
+  };
+}
+
+/**
+ * Generates the 4-digit handshake OTP shown to the courier on delivery
+ * (Section 4.3 of design.md). Always returns exactly 4 digits, including
+ * leading zeros.
+ */
+function generateHandshakeOtp(): string {
+  return String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+}
+
+const MOCK_COURIER_NAMES = ['Sunil Perera', 'Kasun Fernando', 'Nimal Silva', 'Chamara Bandara'];
+const MOCK_VEHICLE_TYPES = ['Cool-Van', 'Mini Truck', 'Tuk-Tuk'];
+
+/**
+ * Deterministic mock courier, derived from a seed (the order id) so the
+ * same order always shows the same driver instead of re-rolling on every
+ * `getDeliveryTracking` call.
+ */
+function generateCourierInfo(seed: string): CourierInfo {
+  const hash = hashString(seed);
+  return {
+    name: MOCK_COURIER_NAMES[hash % MOCK_COURIER_NAMES.length],
+    vehicleType: MOCK_VEHICLE_TYPES[(hash >>> 4) % MOCK_VEHICLE_TYPES.length],
+    plateNumber: `WP CBO-${1000 + (hash % 9000)}`,
+    rating: Math.round((4 + ((hash >>> 8) % 10) / 10) * 10) / 10, // 4.0 - 4.9
+    phone: '+94770000000',
+  };
+}
+
+/**
+ * Maps the fine-grained sandbox `DeliveryStatus` onto the coarser
+ * `OrderStatus` already used by the Orders tab / Screen M-03, so the two
+ * screens stay consistent without collapsing their state machines into one.
+ */
+function toOrderStatus(status: DeliveryStatus): OrderStatus {
+  switch (status) {
+    case 'ORDER_PLACED':
+    case 'COURIER_ASSIGNED':
+      return 'confirmed';
+    case 'COURIER_AT_PICKUP':
+    case 'IN_TRANSIT':
+      return 'in_transit';
+    case 'DELIVERED':
+      return 'delivered';
+    case 'CANCELLED':
+      return 'cancelled';
+    default:
+      return 'placed';
+  }
+}
+
+/**
+ * Fetches the sandbox delivery-tracking state for an order, lazily
+ * creating it on first access (e.g. the moment Screen M-04 mounts right
+ * after checkout). Farm/buyer coordinates, the courier, and the OTP are
+ * all derived deterministically from the order/orderId so they're stable
+ * across app restarts. Never throws — falls back to safe defaults (a
+ * Colombo-area coordinate, "Unknown Farm" seed, etc.) if the underlying
+ * order can't be found, so a stale or missing order never crashes the
+ * tracking screen. Returns null only when `orderId` itself is falsy.
+ */
+export async function getDeliveryTracking(
+  orderId: string
+): Promise<DeliveryTrackingData | null> {
+  if (!orderId) return null;
+
+  const all = await getAllTracking();
+  const existing = all[orderId];
+  if (existing) return existing;
+
+  let order: Order | null = null;
+  try {
+    order = await getOrderById(orderId);
+  } catch (error) {
+    console.error('Failed to load order for delivery tracking:', error);
+  }
+
+  const farmSeed = order?.farmGroups?.[0]?.farmName || orderId;
+  const farmCoordinate = deterministicCoordinate(farmSeed);
+  const buyerCoordinate = deterministicCoordinate(`${farmSeed}::buyer`);
+
+  const tracking: DeliveryTrackingData = {
+    orderId,
+    status: 'COURIER_ASSIGNED',
+    otp: generateHandshakeOtp(),
+    courier: generateCourierInfo(orderId),
+    farmCoordinate,
+    buyerCoordinate,
+    courierCoordinate: { ...farmCoordinate },
+    etaMinutes: 18,
+  };
+
+  const updatedAll = { ...all, [orderId]: tracking };
+  await saveAllTracking(updatedAll);
+  return tracking;
+}
+
+/**
+ * Sets the sandbox delivery status for an order (driven by the Section 4.5
+ * "Trigger Pickup" / "Advance to Transit" / "Trigger Delivery" controls),
+ * snaps the courier marker to the pickup/dropoff point on the matching
+ * transitions, keeps the persisted `Order.status` in sync via
+ * `toOrderStatus` (so the Orders tab reflects it too), and notifies any
+ * live subscribers. Returns null if there's no tracking state to update
+ * (e.g. an invalid orderId).
+ */
+export async function updateDeliveryStatus(
+  orderId: string,
+  status: DeliveryStatus
+): Promise<DeliveryTrackingData | null> {
+  const all = await getAllTracking();
+  const existing = all[orderId] ?? (await getDeliveryTracking(orderId));
+  if (!existing) return null;
+
+  const updatedTracking: DeliveryTrackingData = {
+    ...existing,
+    status,
+    courierCoordinate:
+      status === 'COURIER_AT_PICKUP'
+        ? { ...existing.farmCoordinate }
+        : status === 'DELIVERED'
+        ? { ...existing.buyerCoordinate }
+        : existing.courierCoordinate,
+    etaMinutes: status === 'DELIVERED' ? 0 : existing.etaMinutes,
+  };
+
+  const updatedAll = { ...all, [orderId]: updatedTracking };
+  await saveAllTracking(updatedAll);
+  notifyTrackingListeners(orderId, updatedTracking);
+
+  // Best-effort sync of the coarser Order.status used by the Orders tab.
+  // If this fails, the sandbox tracking state above has already been
+  // saved and broadcast, so the tracking screen itself stays correct.
+  try {
+    const orders = await getOrders();
+    const nextOrders = orders.map((o) =>
+      o.id === orderId ? { ...o, status: toOrderStatus(status) } : o
+    );
+    await saveOrders(nextOrders);
+  } catch (error) {
+    console.error('Failed to sync order status from delivery tracking:', error);
+  }
+
+  return updatedTracking;
+}
+
+/**
+ * Advances the courier marker one tick along the straight line from the
+ * farm pin to the buyer pin (Section 4.1's "Moving Courier Marker...
+ * interpolating along polyline coordinates"). Intended to be called on an
+ * interval (e.g. every 1-2s) from DeliveryTrackingScreen while status is
+ * `IN_TRANSIT`; it's a safe no-op (returns the tracking unchanged) once
+ * status isn't `IN_TRANSIT` or there's no tracking state yet, so callers
+ * don't need to guard the interval themselves.
+ *
+ * `steps` controls how many ticks the full farm -> buyer trip takes
+ * (default 20).
+ */
+export async function simulateCourierMovement(
+  orderId: string,
+  steps: number = 20
+): Promise<DeliveryTrackingData | null> {
+  const all = await getAllTracking();
+  const existing = all[orderId];
+  if (!existing || existing.status !== 'IN_TRANSIT') {
+    return existing ?? null;
+  }
+
+  const { farmCoordinate, buyerCoordinate, courierCoordinate } = existing;
+  const safeSteps = Math.max(1, steps);
+  const dLat = (buyerCoordinate.latitude - farmCoordinate.latitude) / safeSteps;
+  const dLng = (buyerCoordinate.longitude - farmCoordinate.longitude) / safeSteps;
+  const stepDist = Math.hypot(dLat, dLng);
+  const distToTarget = Math.hypot(
+    buyerCoordinate.latitude - courierCoordinate.latitude,
+    buyerCoordinate.longitude - courierCoordinate.longitude
+  );
+
+  // Close enough to the buyer pin - snap to it rather than overshooting,
+  // but leave status transition to DELIVERED for the explicit "Trigger
+  // Delivery" + OTP flow rather than doing it implicitly here.
+  const nextCoordinate: GeoCoordinate =
+    distToTarget <= stepDist
+      ? { ...buyerCoordinate }
+      : {
+          latitude: courierCoordinate.latitude + dLat,
+          longitude: courierCoordinate.longitude + dLng,
+        };
+
+  const updatedTracking: DeliveryTrackingData = {
+    ...existing,
+    courierCoordinate: nextCoordinate,
+    etaMinutes: Math.max(0, existing.etaMinutes - 1),
+  };
+
+  const updatedAll = { ...all, [orderId]: updatedTracking };
+  await saveAllTracking(updatedAll);
+  notifyTrackingListeners(orderId, updatedTracking);
+  return updatedTracking;
 }

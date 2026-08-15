@@ -106,6 +106,54 @@ export const DEFAULT_FILTER_STATE: FilterState = {
   priceRange: { ...DEFAULT_PRICE_RANGE },
 };
 
+// ---------------------------------------------------------------------------
+// Screen M-04: Uber Developer Sandbox Live Delivery Tracking
+// ---------------------------------------------------------------------------
+
+/**
+ * Fine-grained delivery state machine driven by the Screen M-04 sandbox
+ * simulation controls. This is intentionally more granular than
+ * `OrderStatus` above (which the Orders tab / M-03 checkout use) — storage.ts
+ * keeps the two in sync via `toOrderStatus` so neither screen has to know
+ * about the other's model.
+ */
+export type DeliveryStatus =
+  | 'ORDER_PLACED'
+  | 'COURIER_ASSIGNED'
+  | 'COURIER_AT_PICKUP'
+  | 'IN_TRANSIT'
+  | 'DELIVERED'
+  | 'CANCELLED';
+
+export interface GeoCoordinate {
+  latitude: number;
+  longitude: number;
+}
+
+export interface CourierInfo {
+  name: string;
+  vehicleType: string; // e.g. "Cool-Van"
+  plateNumber: string; // e.g. "WP CBO-4821"
+  rating: number; // 4.0 - 5.0
+  phone: string; // E.164-ish string usable with tel:
+}
+
+/**
+ * Full sandbox tracking state for a single order (Section 4 of
+ * `Screen M-04.md`): map coordinates, the 4-digit handshake OTP, courier
+ * telemetry, and the current delivery status.
+ */
+export interface DeliveryTrackingData {
+  orderId: string;
+  status: DeliveryStatus;
+  otp: string; // 4-digit handshake OTP shown to the courier on delivery
+  courier: CourierInfo;
+  farmCoordinate: GeoCoordinate;
+  buyerCoordinate: GeoCoordinate;
+  courierCoordinate: GeoCoordinate; // interpolates from farm -> buyer while IN_TRANSIT
+  etaMinutes: number;
+}
+
 // Navigation param lists
 export type RootTabParamList = {
   Marketplace: undefined;
@@ -119,5 +167,14 @@ export type RootTabParamList = {
 // Stripe test payment, the same pattern used for the Profile tab's stack.
 export type CartStackParamList = {
   CartHome: undefined;
+  OrderTracking: { orderId: string };
+};
+
+// Orders tab also gets its own stack (same pattern as Cart/Profile) so a
+// "Track Delivery" action on an active order in the Orders tab can push
+// into the same Screen M-04 implementation without cross-tab navigation
+// hacks.
+export type OrdersStackParamList = {
+  OrdersHome: undefined;
   OrderTracking: { orderId: string };
 };

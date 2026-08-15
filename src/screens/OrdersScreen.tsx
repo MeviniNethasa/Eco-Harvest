@@ -1,11 +1,18 @@
 // src/screens/OrdersScreen.tsx
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
-import { Order, OrderStatus } from '../types';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Order, OrderStatus, OrdersStackParamList } from '../types';
 import { getOrders, subscribeToOrders } from '../utils/storage';
+
+// "Active" orders are the ones a courier is still moving toward the buyer
+// for — delivered/cancelled orders have nothing left to track on Screen M-04.
+const TRACKABLE_STATUSES: OrderStatus[] = ['placed', 'confirmed', 'in_transit'];
+
+type OrdersNavProp = NativeStackNavigationProp<OrdersStackParamList, 'OrdersHome'>;
 
 const colors = {
   primaryGreen: '#15803D',
@@ -52,7 +59,9 @@ function StatusBadge({ status }: { status: OrderStatus }) {
 }
 
 function OrderCard({ order }: { order: Order }) {
+  const navigation = useNavigation<OrdersNavProp>();
   const itemCount = order.items.reduce((sum, item) => sum + item.quantity, 0);
+  const isTrackable = TRACKABLE_STATUSES.includes(order.status);
 
   return (
     <View style={styles.card}>
@@ -86,6 +95,16 @@ function OrderCard({ order }: { order: Order }) {
         </Text>
         <Text style={styles.grandTotal}>{formatLKR(order.summary.grandTotal)}</Text>
       </View>
+
+      {isTrackable && (
+        <Pressable
+          style={styles.trackButton}
+          onPress={() => navigation.navigate('OrderTracking', { orderId: order.id })}
+        >
+          <Ionicons name="navigate-outline" size={16} color={colors.primaryGreen} />
+          <Text style={styles.trackButtonText}>Track Delivery</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -272,5 +291,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: colors.textDark,
+  },
+
+  trackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+    minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.primaryGreen,
+    backgroundColor: `${colors.primaryGreen}0D`,
+  },
+  trackButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.primaryGreen,
   },
 });
