@@ -14,6 +14,7 @@ export interface Crop {
   province: string;
   district: string;
   city: string;
+  lowStockThreshold?: number;
 }
 
 export interface CartItem {

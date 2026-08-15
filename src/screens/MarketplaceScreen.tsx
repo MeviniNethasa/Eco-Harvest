@@ -1,6 +1,6 @@
 // src/screens/MarketplaceScreen.tsx
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,9 +10,11 @@ import {
   TouchableOpacity,
   SafeAreaView,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { Crop, FilterState, DEFAULT_FILTER_STATE } from '../types';
 import { MOCK_CROPS } from '../data/mockData';
+import { getCrops, subscribeToCrops } from '../utils/storage';
 import ProductCard from '../components/ProductCard';
 import FilterModal from '../components/FilterModal';
 
@@ -22,6 +24,42 @@ export default function MarketplaceScreen() {
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Crops published from Screen M-02 (Farmer Onboarding), loaded from
+  // AsyncStorage via storage.ts. Kept separate from MOCK_CROPS (the static
+  // seed catalog) and merged below.
+  const [publishedCrops, setPublishedCrops] = useState<Crop[]>([]);
+
+  // Re-fetch published crops every time this screen gains focus (e.g. after
+  // navigating back from Screen M-02 right after publishing).
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      getCrops().then((crops) => {
+        if (isActive) setPublishedCrops(crops);
+      });
+      return () => {
+        isActive = false;
+      };
+    }, [])
+  );
+
+  // Also stay live while this screen is mounted, in case a crop is
+  // published/edited/removed without a focus change in between.
+  useEffect(() => {
+    const unsubscribe = subscribeToCrops(setPublishedCrops);
+    return unsubscribe;
+  }, []);
+
+  // Merge the static seed catalog with dynamically published crops.
+  // Published crops are listed first (most-recent-first, since
+  // storage.ts's publishCrop() prepends), and de-duped by id in case a
+  // published crop ever reuses a seed id.
+  const allCrops = useMemo<Crop[]>(() => {
+    const seenIds = new Set(publishedCrops.map((crop) => crop.id));
+    const seedCrops = MOCK_CROPS.filter((crop: Crop) => !seenIds.has(crop.id));
+    return [...publishedCrops, ...seedCrops];
+  }, [publishedCrops]);
+
   const activeFilterCount =
     filters.categories.length +
     (filters.verifiedOnly ? 1 : 0) +
@@ -29,7 +67,7 @@ export default function MarketplaceScreen() {
     (filters.priceRange.min > 0 || filters.priceRange.max < 2000 ? 1 : 0);
 
   const filteredCrops = useMemo(() => {
-    return MOCK_CROPS.filter((crop: Crop) => {
+    return allCrops.filter((crop: Crop) => {
       // Search filter (crop name or farm name)
       const query = searchQuery.trim().toLowerCase();
       if (query) {
@@ -81,7 +119,7 @@ export default function MarketplaceScreen() {
 
       return true;
     });
-  }, [searchQuery, filters]);
+  }, [allCrops, searchQuery, filters]);
 
   const handleApplyFilters = useCallback((newFilters: FilterState) => {
     setFilters(newFilters);

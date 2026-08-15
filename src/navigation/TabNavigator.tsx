@@ -1,17 +1,30 @@
 // src/navigation/TabNavigator.tsx
 
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { NavigationContainer, useIsFocused } from '@react-navigation/native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { NavigationContainer, useIsFocused, useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { RootTabParamList } from '../types';
 import { getCartCount } from '../utils/storage';
 import MarketplaceScreen from '../screens/MarketplaceScreen';
+import FarmerOnboardingScreen from '../screens/FarmerOnboardingScreen';
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
-// --- Minimal placeholder screens for Orders / Cart / Profile ---
+// Screen M-02 isn't a top-level tab per the design spec ("Accessible via the
+// App Navigation stack — e.g. Profile / Switch to Farmer Mode or dedicated
+// screen route"), so it's nested inside the Profile tab as its own stack
+// rather than added to RootTabParamList (src/types/index.ts).
+export type ProfileStackParamList = {
+  ProfileHome: undefined;
+  FarmerOnboarding: undefined;
+};
+const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
+
+// --- Minimal placeholder screens for Orders / Cart ---
 // Replace these with your real screen implementations as needed.
 
 function OrdersScreen() {
@@ -30,11 +43,47 @@ function CartScreen() {
   );
 }
 
+// --- Profile (now the entry point into the Farmer Portal / Screen M-02) ---
+
+type ProfileNavProp = NativeStackNavigationProp<ProfileStackParamList, 'ProfileHome'>;
+
 function ProfileScreen() {
+  const navigation = useNavigation<ProfileNavProp>();
+
   return (
-    <View style={styles.placeholder}>
+    <View style={styles.profileContainer}>
       <Text style={styles.placeholderText}>Profile</Text>
+
+      <Pressable
+        style={styles.farmerModeCard}
+        onPress={() => navigation.navigate('FarmerOnboarding')}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.farmerModeTitle}>Switch to Farmer Mode</Text>
+          <Text style={styles.farmerModeSubtitle}>
+            Onboard your farm and publish crops to the marketplace
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color="#6B7280" />
+      </Pressable>
     </View>
+  );
+}
+
+function ProfileStackNavigator() {
+  return (
+    <ProfileStack.Navigator screenOptions={{ headerShown: true }}>
+      <ProfileStack.Screen
+        name="ProfileHome"
+        component={ProfileScreen}
+        options={{ title: 'Profile', headerShown: false }}
+      />
+      <ProfileStack.Screen
+        name="FarmerOnboarding"
+        component={FarmerOnboardingScreen}
+        options={{ title: 'Farmer Portal' }}
+      />
+    </ProfileStack.Navigator>
   );
 }
 
@@ -102,9 +151,12 @@ export default function TabNavigator() {
             ),
           }}
         />
+        {/* Nested stack so Profile can push into the Farmer Portal
+            (Screen M-02) while RootTabParamList's own "Profile: undefined"
+            entry (src/types/index.ts) stays untouched. */}
         <Tab.Screen
           name="Profile"
-          component={ProfileScreen}
+          component={ProfileStackNavigator}
           options={{
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="person-outline" size={size} color={color} />
@@ -140,6 +192,35 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#111827',
+  },
+  profileContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FAFAFA',
+    gap: 20,
+    paddingHorizontal: 16,
+  },
+  farmerModeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    backgroundColor: '#F4F4F5',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 16,
+    minHeight: 44,
+  },
+  farmerModeTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#15803D',
+    marginBottom: 2,
+  },
+  farmerModeSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
   },
   badge: {
     position: 'absolute',
