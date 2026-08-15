@@ -24,6 +24,59 @@ export interface CartItem {
   unit: string;
   quantity: number;
   imageUrl: string;
+  // Denormalized farm info so Screen M-03 can group line items by farmer
+  // without a second lookup against the (possibly changed) crop catalog.
+  farmName: string;
+  province: string;
+  district: string;
+  city: string;
+}
+
+/**
+ * One farmer's items within the cart, plus the derived routing distance
+ * shown in the Farm Group Header ("Nuwara Eliya • 12.4 km routing distance").
+ */
+export interface FarmGroup {
+  farmName: string;
+  province: string;
+  district: string;
+  city: string;
+  distanceKm: number;
+  items: CartItem[];
+  subtotal: number;
+}
+
+/**
+ * Non-sensitive payment metadata persisted with the order. The full card
+ * number/CVC are validated client-side (Stripe test mode) and are never
+ * stored — only a masked last4 + brand guess are kept for order history.
+ */
+export interface PaymentDetails {
+  cardBrand: string;
+  cardLast4: string;
+  expiry: string; // MM/YY
+  postalCode: string;
+}
+
+export interface OrderSummary {
+  itemsSubtotal: number;
+  deliveryFee: number;
+  deliveryFeeLabel: string; // e.g. "LKR 250", "Free", "50% Off"
+  wholesaleDiscount: number;
+  wholesaleDiscountPercent: number; // 0, 10, or 15
+  grandTotal: number;
+}
+
+export type OrderStatus = 'placed' | 'confirmed' | 'in_transit' | 'delivered' | 'cancelled';
+
+export interface Order {
+  id: string;
+  items: CartItem[];
+  farmGroups: FarmGroup[];
+  summary: OrderSummary;
+  payment: PaymentDetails;
+  status: OrderStatus;
+  createdAt: string; // ISO timestamp
 }
 
 export interface LocationFilter {
@@ -59,4 +112,12 @@ export type RootTabParamList = {
   Orders: undefined;
   Cart: undefined;
   Profile: undefined;
+};
+
+// Cart tab is its own stack so Screen M-03 (cart/checkout) can push into
+// Screen M-04 (Uber Sandbox live delivery tracking) after a successful
+// Stripe test payment, the same pattern used for the Profile tab's stack.
+export type CartStackParamList = {
+  CartHome: undefined;
+  OrderTracking: { orderId: string };
 };

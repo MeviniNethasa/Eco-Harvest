@@ -1,10 +1,40 @@
 // src/utils/storage.ts
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CartItem, Crop } from '../types';
+import {
+  CartItem,
+  Crop,
+  FarmGroup,
+  Order,
+  OrderSummary,
+  PaymentDetails,
+} from '../types';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
+const ORDERS_STORAGE_KEY = '@ecoharvest/orders';
+
+/**
+ * Simple pub/sub (same pattern as the crop listeners further down) so the
+ * bottom tab bar badge can update immediately whenever the cart changes,
+ * even when the change happens from a screen nested deeper in the Cart
+ * stack (e.g. checkout clearing the cart) rather than the Cart tab itself
+ * regaining focus.
+ */
+type CartListener = (cart: CartItem[]) => void;
+const cartListeners = new Set<CartListener>();
+
+function notifyCartListeners(cart: CartItem[]): void {
+  cartListeners.forEach((listener) => listener(cart));
+}
+
+/**
+ * Subscribe to real-time cart updates. Returns an unsubscribe function.
+ */
+export function subscribeToCart(listener: CartListener): () => void {
+  cartListeners.add(listener);
+  return () => cartListeners.delete(listener);
+}
 
 /**
  * Retrieve the full cart from AsyncStorage.
@@ -25,6 +55,7 @@ export async function getCart(): Promise<CartItem[]> {
 async function saveCart(cart: CartItem[]): Promise<void> {
   try {
     await AsyncStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+    notifyCartListeners(cart);
   } catch (error) {
     console.error('Failed to save cart to storage:', error);
   }
@@ -50,6 +81,10 @@ export async function addToCart(crop: Crop, quantity: number): Promise<CartItem[
       unit: crop.unit,
       quantity,
       imageUrl: crop.imageUrl,
+      farmName: crop.farmName,
+      province: crop.province,
+      district: crop.district,
+      city: crop.city,
     });
   }
 
@@ -94,6 +129,7 @@ export async function removeFromCart(cropId: string): Promise<CartItem[]> {
 export async function clearCart(): Promise<void> {
   try {
     await AsyncStorage.removeItem(CART_STORAGE_KEY);
+    notifyCartListeners([]);
   } catch (error) {
     console.error('Failed to clear cart:', error);
   }
@@ -240,4 +276,267 @@ export async function clearCrops(): Promise<void> {
  */
 export function generateCropId(): string {
   return `crop_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Generates a reasonably unique order id, same approach as generateCropId.
+ */
+export function generateOrderId(): string {
+  return `order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Cart grouping, pricing, and order creation (Screen M-03)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fallback routing distance (km) used whenever a cart item is missing
+ * farm/location data — e.g. items persisted before `farmName` etc. were
+ * added to `CartItem`, or malformed AsyncStorage data.
+ */
+const FALLBACK_DISTANCE_KM = 10.0;
+const FALLBACK_FARM_NAME = 'Unknown Farm';
+const FALLBACK_LOCATION = 'Unknown';
+
+/**
+ * Deterministically derives a mock routing distance (km) for a farm from its
+ * name, so the same farm always shows the same distance in the UI without
+ * needing real geocoding/routing data wired up yet. Range: ~2.0–24.9 km.
+ *
+ * Defensive: if `farmName` is missing, not a string, or empty, this returns
+ * `FALLBACK_DISTANCE_KM` instead of touching `.length` on a bad value.
+ */
+function computeDistanceKm(farmName: string | undefined | null): number {
+  if (typeof farmName !== 'string' || farmName.trim().length === 0) {
+    return FALLBACK_DISTANCE_KM;
+  }
+
+  let hash = 0;
+  for (let i = 0; i < farmName.length; i++) {
+    hash = (hash * 31 + farmName.charCodeAt(i)) >>> 0;
+  }
+  const km = 2 + (hash % 230) / 10; // 2.0 - 24.9
+  return Math.round(km * 10) / 10;
+}
+
+/**
+ * Groups the flat cart array into per-farmer sections (Section 4.1 of
+ * design.md: "line items explicitly grouped by farmer_id / farmName"),
+ * each carrying its own subtotal and routing distance.
+ *
+ * Defensive: tolerates a null/undefined `cart`, null/undefined entries
+ * within it, and items missing `farmName`/`province`/`district`/`city`
+ * (e.g. carts saved before those fields existed on `CartItem`). Anything
+ * missing falls back to "Unknown Farm" / "Unknown" / 10.0 km rather than
+ * throwing, so a stale AsyncStorage payload can never crash this screen.
+ */
+export function groupCartByFarm(cart: CartItem[] | null | undefined): FarmGroup[] {
+  const groups = new Map<string, FarmGroup>();
+
+  if (!Array.isArray(cart)) {
+    return [];
+  }
+
+  for (const item of cart) {
+    if (!item) continue;
+
+    const farmName =
+      typeof item.farmName === 'string' && item.farmName.trim().length > 0
+        ? item.farmName
+        : FALLBACK_FARM_NAME;
+    const province =
+      typeof item.province === 'string' && item.province.trim().length > 0
+        ? item.province
+        : FALLBACK_LOCATION;
+    const district =
+      typeof item.district === 'string' && item.district.trim().length > 0
+        ? item.district
+        : FALLBACK_LOCATION;
+    const city =
+      typeof item.city === 'string' && item.city.trim().length > 0
+        ? item.city
+        : FALLBACK_LOCATION;
+
+    const pricePerUnit = typeof item.pricePerUnit === 'number' ? item.pricePerUnit : 0;
+    const quantity = typeof item.quantity === 'number' ? item.quantity : 0;
+    const lineTotal = pricePerUnit * quantity;
+
+    // Group unmatched/missing-farm items together under the same fallback
+    // key rather than each becoming its own "Unknown Farm" group.
+    const key = farmName;
+
+    const existing = groups.get(key);
+    if (existing) {
+      existing.items.push(item);
+      existing.subtotal += lineTotal;
+    } else {
+      groups.set(key, {
+        farmName,
+        province,
+        district,
+        city,
+        distanceKm:
+          farmName === FALLBACK_FARM_NAME
+            ? FALLBACK_DISTANCE_KM
+            : computeDistanceKm(farmName),
+        items: [item],
+        subtotal: lineTotal,
+      });
+    }
+  }
+
+  return Array.from(groups.values());
+}
+
+/**
+ * Computes the Order Summary card figures (Section 4.2 of design.md):
+ * items subtotal, distance-aware delivery fee (with Free / 50% Off
+ * subscription-style discount tagging), wholesale volume discount
+ * (10%-15% bulk deduction), and the final grand total.
+ *
+ * Delivery fee: LKR 100 per farm group actually being routed to, scaled by
+ * that group's routing distance. Free above LKR 3,000 subtotal, 50% off
+ * above LKR 1,500 subtotal.
+ *
+ * Wholesale discount: 15% at/above LKR 5,000 subtotal, 10% at/above
+ * LKR 2,000, otherwise none — matching the "10%-15% bulk deduction" range
+ * called out in the spec.
+ */
+export function calculateOrderSummary(cart: CartItem[]): OrderSummary {
+  const farmGroups = groupCartByFarm(cart);
+  const itemsSubtotal = farmGroups.reduce((sum, g) => sum + g.subtotal, 0);
+
+  const baseDeliveryFee = farmGroups.reduce(
+    (sum, g) => sum + Math.round(20 * g.distanceKm) / 10,
+    0
+  );
+
+  let deliveryFee = Math.round(baseDeliveryFee);
+  let deliveryFeeLabel = `LKR ${deliveryFee.toLocaleString()}`;
+
+  if (itemsSubtotal >= 3000) {
+    deliveryFee = 0;
+    deliveryFeeLabel = 'Free';
+  } else if (itemsSubtotal >= 1500) {
+    deliveryFee = Math.round(deliveryFee / 2);
+    deliveryFeeLabel = `LKR ${deliveryFee.toLocaleString()} [50% Off]`;
+  }
+
+  let wholesaleDiscountPercent = 0;
+  if (itemsSubtotal >= 5000) {
+    wholesaleDiscountPercent = 15;
+  } else if (itemsSubtotal >= 2000) {
+    wholesaleDiscountPercent = 10;
+  }
+  const wholesaleDiscount = Math.round(
+    (itemsSubtotal * wholesaleDiscountPercent) / 100
+  );
+
+  const grandTotal = itemsSubtotal + deliveryFee - wholesaleDiscount;
+
+  return {
+    itemsSubtotal,
+    deliveryFee,
+    deliveryFeeLabel,
+    wholesaleDiscount,
+    wholesaleDiscountPercent,
+    grandTotal,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Orders (Screen M-03 checkout -> Screen M-04/Orders tab)
+// ---------------------------------------------------------------------------
+
+/**
+ * Simple pub/sub (same pattern as crops/cart) so the Orders tab can update
+ * live the moment an order is placed, without needing a focus event.
+ */
+type OrderListener = (orders: Order[]) => void;
+const orderListeners = new Set<OrderListener>();
+
+function notifyOrderListeners(orders: Order[]): void {
+  orderListeners.forEach((listener) => listener(orders));
+}
+
+/**
+ * Subscribe to real-time order list updates. Returns an unsubscribe function.
+ *
+ * Typical usage in OrdersScreen:
+ *
+ *   useFocusEffect(useCallback(() => { getOrders().then(setOrders); }, []));
+ *   useEffect(() => subscribeToOrders(setOrders), []);
+ */
+export function subscribeToOrders(listener: OrderListener): () => void {
+  orderListeners.add(listener);
+  return () => orderListeners.delete(listener);
+}
+
+/**
+ * Retrieve all past orders from AsyncStorage, most recent first.
+ */
+export async function getOrders(): Promise<Order[]> {
+  try {
+    const raw = await AsyncStorage.getItem(ORDERS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as Order[]) : [];
+  } catch (error) {
+    console.error('Failed to read orders from storage:', error);
+    return [];
+  }
+}
+
+/**
+ * Persist the full orders array and notify all live subscribers.
+ * Throws on failure — see saveCrops for the same rationale.
+ */
+async function saveOrders(orders: Order[]): Promise<void> {
+  await AsyncStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders));
+  notifyOrderListeners(orders);
+}
+
+/**
+ * Fetch a single order by id (used by Screen M-04 to load what it's
+ * tracking).
+ */
+export async function getOrderById(orderId: string): Promise<Order | null> {
+  const orders = await getOrders();
+  return orders.find((o) => o.id === orderId) ?? null;
+}
+
+/**
+ * Execution trigger for the Screen M-03 sticky "[ Pay LKR <GrandTotal> via
+ * Stripe ]" button: snapshots the current cart into an Order, persists it,
+ * clears the cart, and returns the new order so the caller can navigate
+ * into Screen M-04 with its id.
+ *
+ * Throws if the cart is empty or if persisting fails — callers should
+ * catch this and keep the user on the checkout screen rather than
+ * navigating forward on a failed/empty order.
+ */
+export async function createOrder(payment: PaymentDetails): Promise<Order> {
+  const cart = await getCart();
+  if (!Array.isArray(cart) || cart.length === 0) {
+    throw new Error('Cannot create an order from an empty cart.');
+  }
+
+  const summary = calculateOrderSummary(cart);
+  const farmGroups = groupCartByFarm(cart);
+
+  const order: Order = {
+    id: generateOrderId(),
+    items: cart,
+    farmGroups,
+    summary,
+    payment,
+    status: 'placed',
+    createdAt: new Date().toISOString(),
+  };
+
+  const existingOrders = await getOrders();
+  const updatedOrders = [order, ...existingOrders];
+
+  await saveOrders(updatedOrders);
+  await clearCart();
+
+  return order;
 }

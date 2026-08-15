@@ -1,16 +1,19 @@
 // src/navigation/TabNavigator.tsx
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { NavigationContainer, useIsFocused, useNavigation } from '@react-navigation/native';
+import { NavigationContainer, useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { RootTabParamList } from '../types';
-import { getCartCount } from '../utils/storage';
+import { CartStackParamList, RootTabParamList } from '../types';
+import { getCartCount, subscribeToCart, getOrderById } from '../utils/storage';
 import MarketplaceScreen from '../screens/MarketplaceScreen';
 import FarmerOnboardingScreen from '../screens/FarmerOnboardingScreen';
+import CartScreen from '../screens/CartScreen';
+import OrdersScreen from '../screens/OrdersScreen';
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
@@ -24,22 +27,60 @@ export type ProfileStackParamList = {
 };
 const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
 
-// --- Minimal placeholder screens for Orders / Cart ---
-// Replace these with your real screen implementations as needed.
+// --- Cart (Screen M-03 -> Screen M-04) ---
+//
+// The Cart tab gets its own stack, mirroring the Profile tab's pattern, so
+// a successful Stripe test payment on Screen M-03 (CartScreen) can push
+// into Screen M-04 (Uber Sandbox Live Delivery Tracking) with the new
+// order's id, per design.md Section 4.4.
 
-function OrdersScreen() {
+const CartStack = createNativeStackNavigator<CartStackParamList>();
+
+type OrderTrackingRouteProp = RouteProp<CartStackParamList, 'OrderTracking'>;
+
+// Placeholder for Screen M-04 (Uber Sandbox Live Delivery Tracking).
+// Replace this component with the real M-04 implementation when it's
+// built; it already receives the correct `orderId` param from checkout.
+function OrderTrackingScreen() {
+  const route = useRoute<OrderTrackingRouteProp>();
+  const { orderId } = route.params;
+  const [grandTotal, setGrandTotal] = useState<number | null>(null);
+
+  useEffect(() => {
+    getOrderById(orderId).then((order) => {
+      if (order) setGrandTotal(order.summary.grandTotal);
+    });
+  }, [orderId]);
+
   return (
     <View style={styles.placeholder}>
-      <Text style={styles.placeholderText}>Orders</Text>
+      <Ionicons name="checkmark-circle" size={48} color="#15803D" />
+      <Text style={[styles.placeholderText, { marginTop: 12 }]}>
+        Order Placed
+      </Text>
+      <Text style={styles.orderTrackingSubtext}>Order #{orderId}</Text>
+      {grandTotal !== null && (
+        <Text style={styles.orderTrackingSubtext}>
+          LKR {grandTotal.toLocaleString('en-LK')} paid via Stripe (test mode)
+        </Text>
+      )}
+      <Text style={[styles.orderTrackingSubtext, { marginTop: 8 }]}>
+        Live delivery tracking (Screen M-04) goes here.
+      </Text>
     </View>
   );
 }
 
-function CartScreen() {
+function CartStackNavigator() {
   return (
-    <View style={styles.placeholder}>
-      <Text style={styles.placeholderText}>Cart</Text>
-    </View>
+    <CartStack.Navigator screenOptions={{ headerShown: false }}>
+      <CartStack.Screen name="CartHome" component={CartScreen} />
+      <CartStack.Screen
+        name="OrderTracking"
+        component={OrderTrackingScreen}
+        options={{ headerShown: true, title: 'Delivery Tracking' }}
+      />
+    </CartStack.Navigator>
   );
 }
 
@@ -96,9 +137,23 @@ function CartTabIcon({ color, size }: { color: string; size: number }) {
     setCount(total);
   }, []);
 
+  // Refresh whenever the Cart tab regains focus...
   React.useEffect(() => {
     if (isFocused) refreshCount();
   }, [isFocused, refreshCount]);
+
+  // ...and also live, via pub/sub, so edits/checkout happening on a screen
+  // nested inside the Cart stack (e.g. Screen M-03 clearing the cart after
+  // a Stripe test payment while Screen M-04 is on top) still update the
+  // badge immediately instead of waiting for the tab to be refocused.
+  React.useEffect(() => {
+    refreshCount();
+    const unsubscribe = subscribeToCart((cart) => {
+      const total = cart.reduce((sum, item) => sum + item.quantity, 0);
+      setCount(total);
+    });
+    return unsubscribe;
+  }, [refreshCount]);
 
   return (
     <View>
@@ -144,7 +199,7 @@ export default function TabNavigator() {
         />
         <Tab.Screen
           name="Cart"
-          component={CartScreen}
+          component={CartStackNavigator}
           options={{
             tabBarIcon: ({ color, size }) => (
               <CartTabIcon color={color} size={size} />
@@ -192,6 +247,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#111827',
+  },
+  orderTrackingSubtext: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginTop: 4,
   },
   profileContainer: {
     flex: 1,
