@@ -7,11 +7,14 @@ import {
   BulkSubscription,
   BulkTierInfo,
   CartItem,
+  ChatMessage,
+  ChatThread,
   CourierInfo,
   Crop,
   DeliveryStatus,
   DeliveryTrackingData,
   ExtractedListItem,
+  FarmerProfile,
   FarmGroup,
   GeoCoordinate,
   Order,
@@ -23,9 +26,12 @@ import {
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
+const FARMER_PROFILE_STORAGE_KEY = '@ecoharvest/farmer-profile';
 const ORDERS_STORAGE_KEY = '@ecoharvest/orders';
 const TRACKING_STORAGE_KEY = '@ecoharvest/delivery-tracking';
 const SUBSCRIPTIONS_STORAGE_KEY = '@ecoharvest/bulk-subscriptions';
+const CHAT_MESSAGES_STORAGE_KEY = '@ecoharvest/chat-messages';
+const CHAT_THREADS_STORAGE_KEY = '@ecoharvest/chat-threads';
 
 /**
  * Simple pub/sub (same pattern as the crop listeners further down) so the
@@ -245,8 +251,26 @@ async function saveCrops(crops: Crop[]): Promise<void> {
  * Throws if the save fails — callers should catch this and inform the user
  * rather than assuming success.
  */
-export async function publishCrop(cropInput: Omit<Crop, 'id'>): Promise<Crop[]> {
-  const crop: Crop = { ...cropInput, id: generateCropId() };
+/**
+ * Publishing entry point for Screen M-02's "Publish Crop Listing" action.
+ * Generates a guaranteed-unique id itself (single source of truth for IDs),
+ * and — critically — derives `isSLSIVerified` from the farmer's *saved*
+ * `FarmerProfile.verificationStatus` rather than trusting a caller-supplied
+ * flag. This is why `isSLSIVerified` isn't part of `cropInput`'s type at
+ * all: a crop can only ever be flagged verified because the farmer's
+ * profile is actually `'VERIFIED'`, never because a screen happened to pass
+ * `true`. Prepends the new crop, persists it, and pushes the updated list
+ * to every subscriber (e.g. MarketplaceScreen) so it shows up immediately.
+ *
+ * Throws if the save fails — callers should catch this and inform the user
+ * rather than assuming success.
+ */
+export async function publishCrop(
+  cropInput: Omit<Crop, 'id' | 'isSLSIVerified'>
+): Promise<Crop[]> {
+  const profile = await getFarmerProfile();
+  const isSLSIVerified = profile?.verificationStatus === 'VERIFIED';
+  const crop: Crop = { ...cropInput, id: generateCropId(), isSLSIVerified };
   const existing = await getCrops();
   const updated = [crop, ...existing];
   await saveCrops(updated);
@@ -296,6 +320,70 @@ export function generateCropId(): string {
  */
 export function generateOrderId(): string {
   return `order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Farmer Profile (Screen M-02 onboarding, persisted so it's only done once)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates a reasonably unique farmer-profile id, same approach as
+ * generateCropId.
+ */
+export function generateFarmerId(): string {
+  return `farmer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Retrieve the persisted farmer profile, or `null` if the farmer has never
+ * completed onboarding. `null` is the signal Screen M-02 uses to decide
+ * between rendering the Onboarding Form vs. the Farmer Dashboard.
+ */
+export async function getFarmerProfile(): Promise<FarmerProfile | null> {
+  try {
+    const raw = await AsyncStorage.getItem(FARMER_PROFILE_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as FarmerProfile) : null;
+  } catch (error) {
+    console.error('Failed to read farmer profile from storage:', error);
+    return null;
+  }
+}
+
+/**
+ * Persist the farmer profile (creation on first-time onboarding, or an
+ * update via "Edit Profile Details"). Always re-derives `isSLSIVerified`
+ * from `verificationStatus` before saving, so the two fields can never end
+ * up out of sync no matter what the caller passed in.
+ *
+ * Throws on failure — callers should catch this and inform the user rather
+ * than assuming success (same convention as saveCrops/publishCrop).
+ */
+export async function saveFarmerProfile(profile: FarmerProfile): Promise<FarmerProfile> {
+  const normalized: FarmerProfile = {
+    ...profile,
+    isSLSIVerified: profile.verificationStatus === 'VERIFIED',
+  };
+  await AsyncStorage.setItem(FARMER_PROFILE_STORAGE_KEY, JSON.stringify(normalized));
+  return normalized;
+}
+
+/**
+ * Convenience check for "has this farmer finished onboarding at least
+ * once?" — used by Screen M-02 to decide whether to skip straight to the
+ * Farmer Dashboard.
+ */
+export async function hasCompletedFarmerOnboarding(): Promise<boolean> {
+  const profile = await getFarmerProfile();
+  return profile !== null;
+}
+
+/**
+ * Clears the saved farmer profile entirely. Backs the Developer Sandbox's
+ * "Reset Onboarding" control so the first-time onboarding flow can be
+ * re-tested without reinstalling the app.
+ */
+export async function clearFarmerProfile(): Promise<void> {
+  await AsyncStorage.removeItem(FARMER_PROFILE_STORAGE_KEY);
 }
 
 // ---------------------------------------------------------------------------
@@ -1201,4 +1289,272 @@ export async function addBulkMatchItemsToCart(
 
   await saveCart(next);
   return next;
+}
+
+// ---------------------------------------------------------------------------
+// Screen M-06: Moderated In-App Chat Messenger
+// ---------------------------------------------------------------------------
+
+/**
+ * Sri Lankan mobile numbers, written either as a local `07XXXXXXXX` (10
+ * digits) or an international `+947XXXXXXXX` / `947XXXXXXXX` number. This
+ * is tested against a *separator-collapsed* copy of the message (see
+ * `collapseSeparators`) so spaced/dashed forms like "077 123 4567" or
+ * "077-123-4567" are still caught, not just the unbroken digit string.
+ */
+const SL_MOBILE_REGEX = /(?:\+?94)0?7\d{8}|0?7\d{8}/;
+
+/** Standard email address shape, e.g. "farmer@gmail.com". */
+const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}/;
+
+/** Explicit http(s)/www links. */
+const URL_REGEX = /\b(?:https?:\/\/|www\.)\S+/i;
+
+/**
+ * Bare domains typed without a scheme/www (e.g. "meet.me" or
+ * "chatapp.lk") — a common way people try to slip a link past a naive
+ * "starts with http" filter. Intentionally narrowed to a common TLD list
+ * so it doesn't flag every sentence that happens to contain a period.
+ */
+const BARE_DOMAIN_REGEX = /\b[a-zA-Z0-9-]+\.(com|net|org|lk|io|co|info|biz|me|app)\b/i;
+
+/**
+ * Strips spaces, dashes, dots, and parens so a phone number split up as
+ * "077 123 4567" or "(077) 123-4567" still matches `SL_MOBILE_REGEX`,
+ * which expects a contiguous digit run.
+ */
+function collapseSeparators(text: string): string {
+  return text.replace(/[\s\-().]+/g, '');
+}
+
+/**
+ * The Screen M-06 moderation filter (design.md Section 3.2, "Intermediate
+ * Filtration Safety Banner"): a client-side regex parser that flags
+ * attempts to move a conversation off-platform via a phone number, email
+ * address, or web link, so `sendChatMessage` can mark the message
+ * `isBlocked` instead of letting it through as a normal bubble.
+ *
+ * Defensive against non-string/empty input (returns `false` rather than
+ * throwing), since this can be called directly from UI event handlers.
+ */
+export function checkOffPlatformViolation(text: string): boolean {
+  if (typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  if (SL_MOBILE_REGEX.test(collapseSeparators(trimmed))) return true;
+  if (EMAIL_REGEX.test(trimmed)) return true;
+  if (URL_REGEX.test(trimmed)) return true;
+  if (BARE_DOMAIN_REGEX.test(trimmed)) return true;
+
+  return false;
+}
+
+type ChatMessageMap = Record<string, ChatMessage[]>;
+type ChatThreadMap = Record<string, ChatThread>;
+
+/**
+ * Per-thread pub/sub (same rationale as `subscribeToTracking` above): a
+ * ChatScreen instance only ever cares about the one `threadId` it's
+ * mounted with, so keying listeners by thread avoids re-rendering on
+ * unrelated conversations.
+ */
+type ChatListener = (messages: ChatMessage[]) => void;
+const chatListeners = new Map<string, Set<ChatListener>>();
+
+function notifyChatListeners(threadId: string, messages: ChatMessage[]): void {
+  chatListeners.get(threadId)?.forEach((listener) => listener(messages));
+}
+
+/**
+ * Subscribe to live message updates for one chat thread. Returns an
+ * unsubscribe function.
+ */
+export function subscribeToChatMessages(
+  threadId: string,
+  listener: ChatListener
+): () => void {
+  if (!chatListeners.has(threadId)) {
+    chatListeners.set(threadId, new Set());
+  }
+  chatListeners.get(threadId)!.add(listener);
+  return () => {
+    chatListeners.get(threadId)?.delete(listener);
+  };
+}
+
+async function getAllChatMessages(): Promise<ChatMessageMap> {
+  try {
+    const raw = await AsyncStorage.getItem(CHAT_MESSAGES_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as ChatMessageMap) : {};
+  } catch (error) {
+    console.error('Failed to read chat messages from storage:', error);
+    return {};
+  }
+}
+
+async function saveAllChatMessages(
+  map: ChatMessageMap,
+  changedThreadId?: string
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(CHAT_MESSAGES_STORAGE_KEY, JSON.stringify(map));
+    if (changedThreadId) {
+      notifyChatListeners(changedThreadId, map[changedThreadId] ?? []);
+    }
+  } catch (error) {
+    console.error('Failed to save chat messages to storage:', error);
+  }
+}
+
+async function getAllChatThreads(): Promise<ChatThreadMap> {
+  try {
+    const raw = await AsyncStorage.getItem(CHAT_THREADS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as ChatThreadMap) : {};
+  } catch (error) {
+    console.error('Failed to read chat threads from storage:', error);
+    return {};
+  }
+}
+
+async function saveAllChatThreads(map: ChatThreadMap): Promise<void> {
+  try {
+    await AsyncStorage.setItem(CHAT_THREADS_STORAGE_KEY, JSON.stringify(map));
+  } catch (error) {
+    console.error('Failed to save chat threads to storage:', error);
+  }
+}
+
+/**
+ * Generates a reasonably unique chat thread id, same approach as
+ * `generateCropId`/`generateOrderId`. Exported so a screen navigating into
+ * Chat without an existing `threadId` (e.g. "Message Farmer" from the
+ * Marketplace) can mint one up front to pass as a nav param.
+ */
+export function generateChatThreadId(): string {
+  return `thread_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function generateChatMessageId(): string {
+  return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Fetches (lazily creating, on first access) the Header Bar + Transaction
+ * Summary context for one chat thread — same "lazy-create keyed by id"
+ * pattern as `getDeliveryTracking`. If a real order is available it's used
+ * to seed `orderId`/`cropSummary`/`paymentStatus`/`recipientName`;
+ * otherwise sensible sandbox defaults matching design.md's own examples
+ * (`#ORD-8492`, `100kg Organic Carrots`, `Escrow Locked`) are used so the
+ * screen still renders meaningfully with no orders placed yet. Never
+ * throws — falls back to defaults rather than failing the screen mount.
+ */
+export async function getChatThread(
+  threadId: string,
+  overrides?: { recipientName?: string; orderId?: string }
+): Promise<ChatThread> {
+  const all = await getAllChatThreads();
+  const existing = all[threadId];
+  if (existing) {
+    // A caller-supplied recipientName (e.g. from a "Message <Farmer>" nav
+    // param) can update the display name on an already-created thread
+    // without disturbing its orderId/cropSummary/paymentStatus.
+    if (overrides?.recipientName && overrides.recipientName !== existing.recipientName) {
+      const updated: ChatThread = { ...existing, recipientName: overrides.recipientName };
+      await saveAllChatThreads({ ...all, [threadId]: updated });
+      return updated;
+    }
+    return existing;
+  }
+
+  let order: Order | null = null;
+  try {
+    order = overrides?.orderId
+      ? await getOrderById(overrides.orderId)
+      : (await getOrders())[0] ?? null;
+  } catch (error) {
+    console.error('Failed to load order context for chat thread:', error);
+  }
+
+  const cropSummary =
+    order && order.items.length > 0
+      ? order.items.map((item) => `${item.quantity}${item.unit} ${item.name}`).join(', ')
+      : '100kg Organic Carrots';
+
+  const paymentStatus: string = (() => {
+    if (!order) return 'Escrow Locked';
+    switch (order.status) {
+      case 'delivered':
+        return 'Payment Released';
+      case 'cancelled':
+        return 'Refunded';
+      case 'placed':
+        return 'Pending Payment';
+      default:
+        return 'Escrow Locked';
+    }
+  })();
+
+  const thread: ChatThread = {
+    id: threadId,
+    orderId: order?.id ?? `ORD-${1000 + (hashString(threadId) % 9000)}`,
+    cropSummary,
+    paymentStatus,
+    recipientName:
+      overrides?.recipientName ?? order?.farmGroups?.[0]?.farmName ?? 'Nuwara Eliya Organic Farm',
+    isVerified: true,
+  };
+
+  await saveAllChatThreads({ ...all, [threadId]: thread });
+  return thread;
+}
+
+/**
+ * Retrieve the persisted message history for one chat thread, oldest
+ * first. Returns `[]` for an unknown/empty threadId rather than throwing.
+ */
+export async function getChatMessages(threadId: string): Promise<ChatMessage[]> {
+  if (!threadId) return [];
+  const all = await getAllChatMessages();
+  return all[threadId] ?? [];
+}
+
+/**
+ * Sends a message into a chat thread, running it through the Screen M-06
+ * moderation filter first: if `checkOffPlatformViolation` flags the text,
+ * the message is still saved (so the blocked attempt shows up in the
+ * thread as a crimson alert card) but with `isBlocked: true` instead of
+ * being delivered as a normal bubble. Notifies any live subscriber for
+ * this thread (`subscribeToChatMessages`) so an open ChatScreen updates
+ * immediately.
+ *
+ * Throws if `threadId` or `text` (after trimming) is empty — callers
+ * should catch this and keep the user on the input rather than assuming
+ * success.
+ */
+export async function sendChatMessage(
+  threadId: string,
+  text: string,
+  senderRole: ChatMessage['senderRole']
+): Promise<ChatMessage> {
+  const trimmed = typeof text === 'string' ? text.trim() : '';
+  if (!threadId || !trimmed) {
+    throw new Error('sendChatMessage requires a threadId and non-empty text.');
+  }
+
+  const message: ChatMessage = {
+    id: generateChatMessageId(),
+    senderId: senderRole === 'CUSTOMER' ? 'current_customer' : 'current_farmer',
+    senderRole,
+    text: trimmed,
+    isBlocked: checkOffPlatformViolation(trimmed),
+    timestamp: new Date().toISOString(),
+  };
+
+  const all = await getAllChatMessages();
+  const threadMessages = all[threadId] ?? [];
+  const updated = { ...all, [threadId]: [...threadMessages, message] };
+
+  await saveAllChatMessages(updated, threadId);
+  return message;
 }

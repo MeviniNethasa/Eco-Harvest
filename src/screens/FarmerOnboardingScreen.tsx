@@ -1,5 +1,5 @@
 // src/screens/FarmerOnboardingScreen.tsx
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -11,12 +11,19 @@ import {
   FlatList,
   Image,
   Alert,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Crop, CropCategory } from '../types';
-import { publishCrop } from '../utils/storage';
+import { BankDetails, Crop, CropCategory, FarmerProfile, VerificationStatus } from '../types';
+import {
+  clearFarmerProfile,
+  generateFarmerId,
+  getFarmerProfile,
+  publishCrop,
+  saveFarmerProfile,
+} from '../utils/storage';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
 
 // ---------------------------------------------------------------------------
@@ -31,9 +38,22 @@ const tokens = {
   colorTextDark: '#111827',
   colorTextMuted: '#6B7280',
   colorAlertCrimson: '#DC2626',
+  colorAmberPending: '#D97706',
 };
 
 const CATEGORIES: CropCategory[] = ['Vegetables', 'Fruits', 'Grains', 'Spices'];
+
+const BADGE_CONFIG: Record<VerificationStatus, { bg: string; fg: string; label: string }> = {
+  UNVERIFIED: { bg: '#F4F4F5', fg: tokens.colorTextMuted, label: 'Unverified' },
+  PENDING_VERIFICATION: {
+    bg: '#FEF3C7',
+    fg: tokens.colorAmberPending,
+    label: 'Submitted • Pending Admin Verification',
+  },
+  VERIFIED: { bg: '#DCFCE7', fg: tokens.colorPrimaryGreen, label: 'SLSI Organic Verified' },
+};
+
+const PLACEHOLDER_CROP_IMAGE = 'https://placehold.co/400x400/16A34A/FFFFFF?text=Crop';
 
 // ---------------------------------------------------------------------------
 // Small reusable field wrapper (label + mandatory error state)
@@ -105,41 +125,96 @@ const SelectField: React.FC<SelectProps> = ({ label, value, placeholder, options
 };
 
 // ---------------------------------------------------------------------------
+// SLSI Verification Status Badge (3-state)
+// ---------------------------------------------------------------------------
+const VerificationBadge: React.FC<{ status: VerificationStatus }> = ({ status }) => {
+  const config = BADGE_CONFIG[status];
+  return (
+    <View style={[styles.statusTag, { backgroundColor: config.bg }]}>
+      <View style={[styles.statusDot, { backgroundColor: config.fg }]} />
+      <Text style={[styles.statusTagText, { color: config.fg }]}>{config.label}</Text>
+    </View>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
 export default function FarmerOnboardingScreen() {
-  // --- Section 1: Personal & Farm Metadata ---
+  // --- Persisted profile / view-mode state ---
+  const [profile, setProfile] = useState<FarmerProfile | null>(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  // --- Onboarding form fields (shared by first-time setup + "Edit Profile") ---
   const [legalName, setLegalName] = useState('');
   const [mobileNumber, setMobileNumber] = useState('');
   const [farmName, setFarmName] = useState('');
   const [province, setProvince] = useState<string | null>(null);
   const [district, setDistrict] = useState<string | null>(null);
   const [city, setCity] = useState<string | null>(null);
-
-  // --- Section 2: SLSI Certification ---
-  const [isSLSIVerified, setIsSLSIVerified] = useState(false);
-  const [certificateUri, setCertificateUri] = useState<string | null>(null);
-
-  // --- Section 3: Bank Payout Routing ---
-  // (Not part of the `Crop` type — kept as local form state for the farmer's
-  // profile; wire to a farmer-profile storage key if/when you add one.)
   const [bankName, setBankName] = useState('');
   const [branchCode, setBranchCode] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [accountHolderName, setAccountHolderName] = useState('');
+  const [certificateUri, setCertificateUri] = useState<string | null>(null);
+  const [verificationStatus, setVerificationStatus] = useState<VerificationStatus>('UNVERIFIED');
+  const [onboardingErrors, setOnboardingErrors] = useState<Record<string, string>>({});
 
-  // --- Section 4: Product Publisher ---
+  // --- Product Publisher fields (Dashboard / View Mode 2 only) ---
   const [cropImageUri, setCropImageUri] = useState<string | null>(null);
   const [cropName, setCropName] = useState('');
   const [pricePerUnit, setPricePerUnit] = useState('');
   const [category, setCategory] = useState<CropCategory | null>(null);
+  const [availableQtyKg, setAvailableQtyKg] = useState('');
   const [lowStockThreshold, setLowStockThreshold] = useState('');
-
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [publishErrors, setPublishErrors] = useState<Record<string, string>>({});
   const [isPublishing, setIsPublishing] = useState(false);
 
   const districts = useMemo(() => getDistricts(province), [province]);
   const cities = useMemo(() => getCities(province, district), [province, district]);
+
+  // ---- Load the persisted profile once on mount ----
+  useEffect(() => {
+    (async () => {
+      const existing = await getFarmerProfile();
+      setProfile(existing);
+      setIsLoadingProfile(false);
+    })();
+  }, []);
+
+  const resetOnboardingFormFields = () => {
+    setLegalName('');
+    setMobileNumber('');
+    setFarmName('');
+    setProvince(null);
+    setDistrict(null);
+    setCity(null);
+    setBankName('');
+    setBranchCode('');
+    setAccountNumber('');
+    setAccountHolderName('');
+    setCertificateUri(null);
+    setVerificationStatus('UNVERIFIED');
+    setOnboardingErrors({});
+  };
+
+  const prefillFormFromProfile = (p: FarmerProfile) => {
+    setLegalName(p.legalName);
+    setMobileNumber(p.mobileNumber);
+    setFarmName(p.farmName);
+    setProvince(p.province);
+    setDistrict(p.district);
+    setCity(p.city);
+    setBankName(p.bankDetails.bankName);
+    setBranchCode(p.bankDetails.branchCode);
+    setAccountNumber(p.bankDetails.accountNumber);
+    setAccountHolderName(p.bankDetails.accountHolderName);
+    setCertificateUri(p.slsiCertificateUri);
+    setVerificationStatus(p.verificationStatus);
+    setOnboardingErrors({});
+  };
 
   const handleProvinceSelect = (value: string) => {
     setProvince(value);
@@ -172,6 +247,9 @@ export default function FarmerOnboardingScreen() {
   };
 
   // ---- SLSI certificate upload ----
+  // Uploading only ever moves status to PENDING_VERIFICATION — there's no
+  // admin review portal yet to actually grant VERIFIED. Use the Developer
+  // Sandbox toolbar below to simulate the outcome of that review.
   const handleUploadCertificate = async () => {
     const hasPermission = await ensureGalleryPermission();
     if (!hasPermission) return;
@@ -183,7 +261,7 @@ export default function FarmerOnboardingScreen() {
       });
       if (!result.canceled && result.assets?.length) {
         setCertificateUri(result.assets[0].uri);
-        setIsSLSIVerified(true);
+        setVerificationStatus('PENDING_VERIFICATION');
       }
     } catch (err) {
       console.error('Failed to open image library for SLSI certificate:', err);
@@ -212,47 +290,156 @@ export default function FarmerOnboardingScreen() {
     }
   };
 
-  // ---- Validation ----
-  const validate = (): boolean => {
+  // ---- Onboarding form validation ----
+  const validateOnboarding = (): boolean => {
     const next: Record<string, string> = {};
     if (!legalName.trim()) next.legalName = 'Legal name is required.';
     if (!mobileNumber.trim()) next.mobileNumber = 'Mobile number is required.';
     if (!farmName.trim()) next.farmName = 'Farm name is required.';
     if (!province || !district || !city) next.location = 'Select province, district and city.';
+    setOnboardingErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  // ---- Complete Onboarding / Save Changes ----
+  const handleSaveProfile = async () => {
+    if (!validateOnboarding()) return;
+    setIsSavingProfile(true);
+    try {
+      const profileToSave: FarmerProfile = {
+        id: profile?.id ?? generateFarmerId(),
+        legalName: legalName.trim(),
+        mobileNumber: mobileNumber.trim(),
+        farmName: farmName.trim(),
+        province: province as string,
+        district: district as string,
+        city: city as string,
+        bankDetails: {
+          bankName: bankName.trim(),
+          branchCode: branchCode.trim(),
+          accountNumber: accountNumber.trim(),
+          accountHolderName: accountHolderName.trim(),
+        },
+        slsiCertificateUri: certificateUri,
+        verificationStatus,
+        isSLSIVerified: verificationStatus === 'VERIFIED',
+      };
+
+      const saved = await saveFarmerProfile(profileToSave);
+      const wasFirstTime = !profile;
+      setProfile(saved);
+      setIsEditingProfile(false);
+
+      Alert.alert(
+        wasFirstTime ? 'Onboarding Complete' : 'Profile Updated',
+        wasFirstTime
+          ? `Welcome, ${saved.legalName}! Your Farmer Dashboard is ready.`
+          : 'Your farmer profile has been updated.',
+      );
+    } catch (err) {
+      console.error('Failed to save farmer profile:', err);
+      Alert.alert('Something went wrong', 'Could not save your profile. Please try again.');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const handleEditProfile = () => {
+    if (profile) prefillFormFromProfile(profile);
+    setIsEditingProfile(true);
+  };
+
+  const handleCancelEdit = () => {
+    if (profile) prefillFormFromProfile(profile); // discard unsaved edits
+    setIsEditingProfile(false);
+  };
+
+  // ---- Developer Sandbox: manual verification-status toggles ----
+  const applyDevVerificationStatus = async (status: VerificationStatus) => {
+    setVerificationStatus(status);
+    if (!profile) return; // no profile saved yet — just previews in the form
+    try {
+      const updated = await saveFarmerProfile({
+        ...profile,
+        verificationStatus: status,
+        isSLSIVerified: status === 'VERIFIED',
+      });
+      setProfile(updated);
+    } catch (err) {
+      console.error('Failed to update verification status:', err);
+      Alert.alert('Something went wrong', 'Could not update verification status.');
+    }
+  };
+
+  const handleResetOnboarding = () => {
+    Alert.alert(
+      'Reset Onboarding?',
+      'This clears the saved farmer profile from this device so you can test the first-time setup flow again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearFarmerProfile();
+              setProfile(null);
+              setIsEditingProfile(false);
+              resetOnboardingFormFields();
+            } catch (err) {
+              console.error('Failed to reset farmer profile:', err);
+              Alert.alert('Something went wrong', 'Could not reset onboarding.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // ---- Product Publisher validation ----
+  const validatePublish = (): boolean => {
+    const next: Record<string, string> = {};
     if (!cropName.trim()) next.cropName = 'Crop name is required.';
     if (!pricePerUnit.trim() || isNaN(Number(pricePerUnit)) || Number(pricePerUnit) <= 0) {
       next.pricePerUnit = 'Enter a valid price in LKR.';
     }
     if (!category) next.category = 'Select a category.';
     if (
+      availableQtyKg.trim() &&
+      (isNaN(Number(availableQtyKg)) || Number(availableQtyKg) < 0)
+    ) {
+      next.availableQtyKg = 'Enter a valid available quantity.';
+    }
+    if (
       lowStockThreshold.trim() &&
       (isNaN(Number(lowStockThreshold)) || Number(lowStockThreshold) < 0)
     ) {
       next.lowStockThreshold = 'Enter a valid stock threshold.';
     }
-    setErrors(next);
+    setPublishErrors(next);
     return Object.keys(next).length === 0;
   };
 
   // ---- Publish ----
   const handlePublish = async () => {
-    if (!validate()) return;
+    if (!profile) return; // Publisher only renders once a profile exists
+    if (!validatePublish()) return;
     setIsPublishing(true);
     try {
-      // Note: no `id` here — publishCrop() in storage.ts is the single
-      // source of truth for ID generation, so it can't drift out of sync
-      // with whatever ends up persisted.
-      const cropInput: Omit<Crop, 'id'> = {
+      // Farm identity/location come from the saved profile, not re-entered
+      // here. isSLSIVerified is intentionally omitted — publishCrop()
+      // derives it from the farmer's saved verificationStatus.
+      const cropInput: Omit<Crop, 'id' | 'isSLSIVerified'> = {
         name: cropName.trim(),
         category: category as CropCategory,
         pricePerUnit: Number(pricePerUnit),
         unit: '1kg',
-        imageUrl: cropImageUri ?? 'https://placehold.co/400x400/16A34A/FFFFFF?text=Crop',
-        isSLSIVerified,
-        farmName: farmName.trim(),
-        province: province as string,
-        district: district as string,
-        city: city as string,
+        imageUrl: cropImageUri ?? PLACEHOLDER_CROP_IMAGE,
+        farmName: profile.farmName,
+        province: profile.province,
+        district: profile.district,
+        city: profile.city,
+        availableQtyKg: availableQtyKg.trim() ? Number(availableQtyKg) : undefined,
         lowStockThreshold: lowStockThreshold.trim() ? Number(lowStockThreshold) : undefined,
       };
 
@@ -261,252 +448,336 @@ export default function FarmerOnboardingScreen() {
 
       Alert.alert('Crop Published', `${published.name} is now live on the Marketplace.`, [{ text: 'OK' }]);
 
-      // Reset only the product-publisher section — farmer profile & bank
-      // details persist for the next listing.
       setCropImageUri(null);
       setCropName('');
       setPricePerUnit('');
       setCategory(null);
+      setAvailableQtyKg('');
       setLowStockThreshold('');
-      setErrors({});
+      setPublishErrors({});
     } catch (err) {
-      // publishCrop/saveCrops now throw on failure instead of failing
-      // silently, so a broken save is never mistaken for success.
       console.error('Failed to publish crop:', err);
       Alert.alert(
         'Publish failed',
-        'We couldn\'t save this listing. Please check your connection/storage and try again.',
+        "We couldn't save this listing. Please check your connection/storage and try again.",
       );
     } finally {
       setIsPublishing(false);
     }
   };
 
+  // ---------------------------------------------------------------------
+  // Loading state
+  // ---------------------------------------------------------------------
+  if (isLoadingProfile) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator color={tokens.colorPrimaryGreen} size="large" />
+      </View>
+    );
+  }
+
+  const showOnboardingForm = !profile || isEditingProfile;
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: tokens.colorBgMain }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 140 }]}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.screenHeading}>Farmer Portal</Text>
 
-        {/* ---------------- Section 1: Personal & Farm Details ---------------- */}
-        <View style={styles.card}>
-          <Text style={styles.sectionHeading}>Farmer Account Onboarding</Text>
+        {showOnboardingForm ? (
+          <>
+            {/* ---------------- View Mode 1: Onboarding Form ---------------- */}
+            <View style={styles.card}>
+              <Text style={styles.sectionHeading}>
+                {profile ? 'Edit Profile Details' : 'Farmer Account Onboarding'}
+              </Text>
 
-          <Field label="Legal Name" error={errors.legalName}>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter full legal name"
-              placeholderTextColor={tokens.colorTextMuted}
-              value={legalName}
-              onChangeText={setLegalName}
-            />
-          </Field>
+              <Field label="Legal Name" error={onboardingErrors.legalName}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter full legal name"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  value={legalName}
+                  onChangeText={setLegalName}
+                />
+              </Field>
 
-          <Field label="Mobile Number" error={errors.mobileNumber}>
-            <TextInput
-              style={styles.input}
-              placeholder="07X XXXXXXX"
-              placeholderTextColor={tokens.colorTextMuted}
-              keyboardType="phone-pad"
-              value={mobileNumber}
-              onChangeText={setMobileNumber}
-              maxLength={10}
-            />
-          </Field>
+              <Field label="Mobile Number" error={onboardingErrors.mobileNumber}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="07X XXXXXXX"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  keyboardType="phone-pad"
+                  value={mobileNumber}
+                  onChangeText={setMobileNumber}
+                  maxLength={10}
+                />
+              </Field>
 
-          <Field label="Farm Name" error={errors.farmName}>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., Green Valley Organic Farm"
-              placeholderTextColor={tokens.colorTextMuted}
-              value={farmName}
-              onChangeText={setFarmName}
-            />
-          </Field>
+              <Field label="Farm Name" error={onboardingErrors.farmName}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., Green Valley Organic Farm"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  value={farmName}
+                  onChangeText={setFarmName}
+                />
+              </Field>
 
-          <Field label="Location" error={errors.location}>
+              <Field label="Location" error={onboardingErrors.location}>
+                <View style={styles.rowGap}>
+                  <SelectField
+                    label="Province"
+                    value={province}
+                    placeholder="Select"
+                    options={PROVINCES}
+                    onSelect={handleProvinceSelect}
+                  />
+                  <SelectField
+                    label="District"
+                    value={district}
+                    placeholder="Select"
+                    options={districts}
+                    disabled={!province}
+                    onSelect={handleDistrictSelect}
+                  />
+                  <SelectField
+                    label="City"
+                    value={city}
+                    placeholder="Select"
+                    options={cities}
+                    disabled={!district}
+                    onSelect={setCity}
+                  />
+                </View>
+              </Field>
+            </View>
+
+            {/* ---------------- SLSI Certification (optional) ---------------- */}
+            <View style={styles.card}>
+              <Text style={styles.sectionHeading}>SLSI Organic Verification</Text>
+              <Text style={styles.helperText}>
+                Upload SLSI Organic Certificate for Verified Farmer Status
+              </Text>
+
+              <Pressable style={styles.secondaryButton} onPress={handleUploadCertificate}>
+                <Text style={styles.secondaryButtonText}>
+                  {certificateUri ? 'Replace SLSI Certificate' : 'Upload SLSI Certificate'}
+                </Text>
+              </Pressable>
+
+              <VerificationBadge status={verificationStatus} />
+            </View>
+
+            {/* ---------------- Bank Payout Routing ---------------- */}
+            <View style={styles.card}>
+              <Text style={styles.sectionHeading}>Bank Payout Details</Text>
+
+              <Field label="Bank Name">
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., Bank of Ceylon"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  value={bankName}
+                  onChangeText={setBankName}
+                />
+              </Field>
+              <Field label="Branch Code">
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 001"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  keyboardType="number-pad"
+                  value={branchCode}
+                  onChangeText={setBranchCode}
+                />
+              </Field>
+              <Field label="Account Number">
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter account number"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  keyboardType="number-pad"
+                  value={accountNumber}
+                  onChangeText={setAccountNumber}
+                />
+              </Field>
+              <Field label="Account Holder Name">
+                <TextInput
+                  style={styles.input}
+                  placeholder="As per bank records"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  value={accountHolderName}
+                  onChangeText={setAccountHolderName}
+                />
+              </Field>
+            </View>
+
             <View style={styles.rowGap}>
-              <SelectField
-                label="Province"
-                value={province}
-                placeholder="Select"
-                options={PROVINCES}
-                onSelect={handleProvinceSelect}
-              />
-              <SelectField
-                label="District"
-                value={district}
-                placeholder="Select"
-                options={districts}
-                disabled={!province}
-                onSelect={handleDistrictSelect}
-              />
-              <SelectField
-                label="City"
-                value={city}
-                placeholder="Select"
-                options={cities}
-                disabled={!district}
-                onSelect={setCity}
-              />
+              {profile && (
+                <Pressable style={[styles.secondaryButton, { flex: 1 }]} onPress={handleCancelEdit}>
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+              )}
+              <Pressable
+                style={[styles.primaryButton, { flex: 1 }, isSavingProfile && { opacity: 0.6 }]}
+                onPress={handleSaveProfile}
+                disabled={isSavingProfile}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {isSavingProfile
+                    ? 'Saving…'
+                    : profile
+                    ? 'Save Changes'
+                    : 'Complete Onboarding'}
+                </Text>
+              </Pressable>
             </View>
-          </Field>
-        </View>
+          </>
+        ) : (
+          <>
+            {/* ---------------- View Mode 2: Farmer Dashboard ---------------- */}
+            <View style={styles.card}>
+              <Text style={styles.sectionHeading}>{profile.farmName}</Text>
+              <Text style={styles.helperText}>
+                {profile.city}, {profile.district}, {profile.province}
+              </Text>
+              <VerificationBadge status={profile.verificationStatus} />
 
-        {/* ---------------- Section 2: SLSI Certification ---------------- */}
-        <View style={styles.card}>
-          <Text style={styles.sectionHeading}>SLSI Organic Verification</Text>
-          <Text style={styles.helperText}>
-            Upload SLSI Organic Certificate for Verified Farmer Status
-          </Text>
-
-          <Pressable style={styles.secondaryButton} onPress={handleUploadCertificate}>
-            <Text style={styles.secondaryButtonText}>
-              {certificateUri ? 'Replace SLSI Certificate' : 'Upload SLSI Certificate'}
-            </Text>
-          </Pressable>
-
-          <View
-            style={[
-              styles.statusTag,
-              { backgroundColor: isSLSIVerified ? '#DCFCE7' : '#F4F4F5' },
-            ]}
-          >
-            <View
-              style={[
-                styles.statusDot,
-                { backgroundColor: isSLSIVerified ? tokens.colorPrimaryGreen : tokens.colorTextMuted },
-              ]}
-            />
-            <Text
-              style={[
-                styles.statusTagText,
-                { color: isSLSIVerified ? tokens.colorPrimaryGreen : tokens.colorTextMuted },
-              ]}
-            >
-              {isSLSIVerified ? 'SLSI Verified' : 'Pending Verification / Unverified'}
-            </Text>
-          </View>
-        </View>
-
-        {/* ---------------- Section 3: Bank Payout Routing ---------------- */}
-        <View style={styles.card}>
-          <Text style={styles.sectionHeading}>Bank Payout Details</Text>
-
-          <Field label="Bank Name">
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., Bank of Ceylon"
-              placeholderTextColor={tokens.colorTextMuted}
-              value={bankName}
-              onChangeText={setBankName}
-            />
-          </Field>
-          <Field label="Branch Code">
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., 001"
-              placeholderTextColor={tokens.colorTextMuted}
-              keyboardType="number-pad"
-              value={branchCode}
-              onChangeText={setBranchCode}
-            />
-          </Field>
-          <Field label="Account Number">
-            <TextInput
-              style={styles.input}
-              placeholder="Enter account number"
-              placeholderTextColor={tokens.colorTextMuted}
-              keyboardType="number-pad"
-              value={accountNumber}
-              onChangeText={setAccountNumber}
-            />
-          </Field>
-          <Field label="Account Holder Name">
-            <TextInput
-              style={styles.input}
-              placeholder="As per bank records"
-              placeholderTextColor={tokens.colorTextMuted}
-              value={accountHolderName}
-              onChangeText={setAccountHolderName}
-            />
-          </Field>
-        </View>
-
-        {/* ---------------- Section 4: Product Publisher ---------------- */}
-        <View style={styles.card}>
-          <Text style={styles.sectionHeading}>Publish New Crop to Marketplace</Text>
-
-          <Pressable style={styles.imageTrigger} onPress={handleSelectCropImage}>
-            {cropImageUri ? (
-              <Image source={{ uri: cropImageUri }} style={styles.imagePreview} />
-            ) : (
-              <Text style={styles.secondaryButtonText}>Select Crop Image</Text>
-            )}
-          </Pressable>
-
-          <Field label="Crop Name" error={errors.cropName}>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., Organic Carrot"
-              placeholderTextColor={tokens.colorTextMuted}
-              value={cropName}
-              onChangeText={setCropName}
-            />
-          </Field>
-
-          <Field label="Baseline Unit Price" error={errors.pricePerUnit}>
-            <TextInput
-              style={styles.input}
-              placeholder="Price in LKR per 1kg"
-              placeholderTextColor={tokens.colorTextMuted}
-              keyboardType="numeric"
-              value={pricePerUnit}
-              onChangeText={setPricePerUnit}
-            />
-          </Field>
-
-          <Field label="Category" error={errors.category}>
-            <View style={styles.chipRow}>
-              {CATEGORIES.map((cat) => {
-                const selected = category === cat;
-                return (
-                  <Pressable
-                    key={cat}
-                    style={[styles.chip, selected && styles.chipSelected]}
-                    onPress={() => setCategory(cat)}
-                  >
-                    <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{cat}</Text>
-                  </Pressable>
-                );
-              })}
+              <Pressable
+                style={[styles.secondaryButton, { marginTop: 12, marginBottom: 0 }]}
+                onPress={handleEditProfile}
+              >
+                <Text style={styles.secondaryButtonText}>Edit Profile Details</Text>
+              </Pressable>
             </View>
-          </Field>
 
-          <Field label="Low-Stock Alert Threshold" error={errors.lowStockThreshold}>
-            <TextInput
-              style={styles.input}
-              placeholder="Minimum stock threshold (e.g., 10kg)"
-              placeholderTextColor={tokens.colorTextMuted}
-              keyboardType="numeric"
-              value={lowStockThreshold}
-              onChangeText={setLowStockThreshold}
-            />
-          </Field>
+            {/* ---------------- Product Publisher ---------------- */}
+            <View style={styles.card}>
+              <Text style={styles.sectionHeading}>Publish New Crop to Marketplace</Text>
 
-          <Pressable
-            style={[styles.primaryButton, isPublishing && { opacity: 0.6 }]}
-            onPress={handlePublish}
-            disabled={isPublishing}
-          >
-            <Text style={styles.primaryButtonText}>
-              {isPublishing ? 'Publishing…' : 'Publish Crop Listing'}
-            </Text>
-          </Pressable>
-        </View>
+              <Pressable style={styles.imageTrigger} onPress={handleSelectCropImage}>
+                {cropImageUri ? (
+                  <Image source={{ uri: cropImageUri }} style={styles.imagePreview} />
+                ) : (
+                  <Text style={styles.secondaryButtonText}>Select Crop Image</Text>
+                )}
+              </Pressable>
+
+              <Field label="Crop Name" error={publishErrors.cropName}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., Organic Carrot"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  value={cropName}
+                  onChangeText={setCropName}
+                />
+              </Field>
+
+              <Field label="Baseline Unit Price" error={publishErrors.pricePerUnit}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Price in LKR per 1kg"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  keyboardType="numeric"
+                  value={pricePerUnit}
+                  onChangeText={setPricePerUnit}
+                />
+              </Field>
+
+              <Field label="Category" error={publishErrors.category}>
+                <View style={styles.chipRow}>
+                  {CATEGORIES.map((cat) => {
+                    const selected = category === cat;
+                    return (
+                      <Pressable
+                        key={cat}
+                        style={[styles.chip, selected && styles.chipSelected]}
+                        onPress={() => setCategory(cat)}
+                      >
+                        <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                          {cat}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </Field>
+
+              <Field label="Available Stock (kg)" error={publishErrors.availableQtyKg}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 150"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  keyboardType="numeric"
+                  value={availableQtyKg}
+                  onChangeText={setAvailableQtyKg}
+                />
+              </Field>
+
+              <Field label="Low-Stock Alert Threshold" error={publishErrors.lowStockThreshold}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Minimum stock threshold (e.g., 10kg)"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  keyboardType="numeric"
+                  value={lowStockThreshold}
+                  onChangeText={setLowStockThreshold}
+                />
+              </Field>
+
+              <Pressable
+                style={[styles.primaryButton, isPublishing && { opacity: 0.6 }]}
+                onPress={handlePublish}
+                disabled={isPublishing}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {isPublishing ? 'Publishing…' : 'Publish Crop Listing'}
+                </Text>
+              </Pressable>
+            </View>
+          </>
+        )}
       </ScrollView>
+
+      {/* ---------------- Developer Sandbox Toolbar ---------------- */}
+      <View style={styles.devToolbar}>
+        <Text style={styles.devToolbarCaption}>DEV SANDBOX — SLSI STATUS</Text>
+        <View style={styles.devToolbarRow}>
+          <Pressable
+            style={styles.devButton}
+            onPress={() => applyDevVerificationStatus('UNVERIFIED')}
+          >
+            <Text style={styles.devButtonText}>Set Unverified</Text>
+          </Pressable>
+          <Pressable
+            style={styles.devButton}
+            onPress={() => applyDevVerificationStatus('PENDING_VERIFICATION')}
+          >
+            <Text style={styles.devButtonText}>Set Pending</Text>
+          </Pressable>
+          <Pressable
+            style={styles.devButton}
+            onPress={() => applyDevVerificationStatus('VERIFIED')}
+          >
+            <Text style={styles.devButtonText}>Set Verified</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.devButton, styles.devButtonDanger]}
+            onPress={handleResetOnboarding}
+          >
+            <Text style={[styles.devButtonText, styles.devButtonDangerText]}>
+              Reset Onboarding
+            </Text>
+          </Pressable>
+        </View>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -515,9 +786,14 @@ export default function FarmerOnboardingScreen() {
 // Styles — mapped directly to tokens from design.md
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: tokens.colorBgMain,
+  },
   scrollContent: {
     padding: 16,
-    paddingBottom: 48,
   },
   screenHeading: {
     fontSize: 24,
@@ -711,5 +987,52 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  devToolbar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#111827',
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#374151',
+  },
+  devToolbarCaption: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: '#9CA3AF',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  devToolbarRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  devButton: {
+    minHeight: 36,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#4B5563',
+    backgroundColor: '#1F2937',
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  devButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#E5E7EB',
+  },
+  devButtonDanger: {
+    borderColor: tokens.colorAlertCrimson,
+  },
+  devButtonDangerText: {
+    color: '#FCA5A5',
   },
 });

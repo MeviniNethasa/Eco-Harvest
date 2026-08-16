@@ -24,6 +24,52 @@ export interface Crop {
   availableQtyKg?: number;
 }
 
+// ---------------------------------------------------------------------------
+// Screen M-02: Farmer Profile & SLSI Verification (persisted onboarding)
+// ---------------------------------------------------------------------------
+
+/**
+ * Three-state SLSI verification lifecycle. Uploading a certificate moves a
+ * farmer from `UNVERIFIED` to `PENDING_VERIFICATION` — it does NOT
+ * auto-grant `VERIFIED`, since there's no admin review portal yet to
+ * actually confirm the certificate. `VERIFIED` is only reachable via the
+ * Screen M-02 Developer Sandbox toolbar until that portal exists.
+ */
+export type VerificationStatus = 'UNVERIFIED' | 'PENDING_VERIFICATION' | 'VERIFIED';
+
+export interface BankDetails {
+  bankName: string;
+  branchCode: string;
+  accountNumber: string;
+  accountHolderName: string;
+}
+
+/**
+ * Persisted farmer identity, payout routing, and SLSI verification state,
+ * collected once during Screen M-02 onboarding and reused on every
+ * subsequent visit (see `getFarmerProfile` / `hasCompletedFarmerOnboarding`
+ * in storage.ts) instead of re-asking for the same details every time.
+ *
+ * `verificationStatus` is the source of truth for SLSI status.
+ * `isSLSIVerified` is a denormalized boolean mirror of
+ * `verificationStatus === 'VERIFIED'`, kept so `publishCrop` (storage.ts)
+ * and the `Crop`/marketplace UI can keep reading a plain boolean without
+ * needing to know about the 3-state enum.
+ */
+export interface FarmerProfile {
+  id: string;
+  legalName: string;
+  mobileNumber: string;
+  farmName: string;
+  province: string;
+  district: string;
+  city: string;
+  bankDetails: BankDetails;
+  slsiCertificateUri: string | null;
+  verificationStatus: VerificationStatus;
+  isSLSIVerified: boolean;
+}
+
 export interface CartItem {
   cropId: string;
   name: string;
@@ -263,6 +309,42 @@ export interface BulkMatchResult {
   grandTotal: number;
 }
 
+// ---------------------------------------------------------------------------
+// Screen M-06: Moderated In-App Chat Messenger
+// ---------------------------------------------------------------------------
+
+/**
+ * A single message in a Screen M-06 chat thread. `isBlocked` is set by the
+ * moderation filter (`checkOffPlatformViolation` in storage.ts) at send
+ * time when the message text contains off-platform contact info (a phone
+ * number, email, or link) — the message is still persisted (so the thread
+ * has a record something was attempted/blocked) but the ChatScreen renders
+ * it as a crimson "Message Blocked" alert card instead of a normal bubble.
+ */
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderRole: 'CUSTOMER' | 'FARMER';
+  text: string;
+  isBlocked: boolean;
+  timestamp: string; // ISO timestamp
+}
+
+/**
+ * The Transaction Summary Header + Header Bar context for one chat thread
+ * (design.md Sections 3.1 and 3.2). Lazily derived from the matching order
+ * (see `getChatThread` in storage.ts) the first time a thread is opened,
+ * then persisted so it stays stable across re-visits.
+ */
+export interface ChatThread {
+  id: string;
+  orderId: string;
+  cropSummary: string; // e.g. "100kg Organic Carrots"
+  paymentStatus: string; // e.g. "Escrow Locked" / "Pending Payment"
+  recipientName: string;
+  isVerified: boolean;
+}
+
 // Navigation param lists
 export type RootTabParamList = {
   Marketplace: undefined;
@@ -270,6 +352,13 @@ export type RootTabParamList = {
   Bulk: undefined;
   Cart: undefined;
   Profile: undefined;
+  // Screen M-06: reachable directly from the root tab navigator (e.g. a
+  // "Message Farmer" action on Marketplace) in addition to being nested in
+  // the Orders stack below. Both `threadId` and `recipientName` are
+  // optional — if `threadId` is omitted, ChatScreen/getChatThread
+  // (storage.ts) generates a new one and seeds it from `recipientName` and
+  // the most recent order.
+  Chat: { threadId?: string; recipientName?: string };
 };
 
 // Cart tab is its own stack so Screen M-03 (cart/checkout) can push into
@@ -283,8 +372,10 @@ export type CartStackParamList = {
 // Orders tab also gets its own stack (same pattern as Cart/Profile) so a
 // "Track Delivery" action on an active order in the Orders tab can push
 // into the same Screen M-04 implementation without cross-tab navigation
-// hacks.
+// hacks. "Message Farmer"/"Message Buyer" on an order works the same way,
+// pushing into Screen M-06 with the order's context.
 export type OrdersStackParamList = {
   OrdersHome: undefined;
   OrderTracking: { orderId: string };
+  Chat: { threadId?: string; recipientName?: string };
 };

@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -96,15 +97,33 @@ function OrderCard({ order }: { order: Order }) {
         <Text style={styles.grandTotal}>{formatLKR(order.summary.grandTotal)}</Text>
       </View>
 
-      {isTrackable && (
+      <View style={styles.actionRow}>
+        {isTrackable && (
+          <Pressable
+            style={[styles.actionButton, styles.trackButton]}
+            onPress={() => navigation.navigate('OrderTracking', { orderId: order.id })}
+          >
+            <Ionicons name="navigate-outline" size={16} color={colors.primaryGreen} />
+            <Text style={styles.trackButtonText}>Track Delivery</Text>
+          </Pressable>
+        )}
+
+        {/* Screen M-06: opens (or resumes) the Moderated In-App Chat thread
+            tied to this order, keyed by orderId so re-opening the same
+            order's chat always lands back on the same thread/history. */}
         <Pressable
-          style={styles.trackButton}
-          onPress={() => navigation.navigate('OrderTracking', { orderId: order.id })}
+          style={[styles.actionButton, styles.messageButton]}
+          onPress={() =>
+            navigation.navigate('Chat', {
+              threadId: order.id,
+              recipientName: order.farmGroups?.[0]?.farmName || 'Verified Farmer',
+            })
+          }
         >
-          <Ionicons name="navigate-outline" size={16} color={colors.primaryGreen} />
-          <Text style={styles.trackButtonText}>Track Delivery</Text>
+          <Ionicons name="chatbubble-outline" size={16} color={colors.primaryGreen} />
+          <Text style={styles.trackButtonText}>Message Farmer</Text>
         </Pressable>
-      )}
+      </View>
     </View>
   );
 }
@@ -135,26 +154,29 @@ export default function OrdersScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
+      <SafeAreaView style={styles.loadingContainer} edges={['top']}>
         <ActivityIndicator color={colors.primaryGreen} />
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (orders.length === 0) {
     return (
-      <View style={styles.emptyState}>
+      <SafeAreaView style={styles.emptyState} edges={['top']}>
         <Ionicons name="receipt-outline" size={48} color={colors.textMuted} />
         <Text style={styles.emptyStateText}>No orders yet</Text>
         <Text style={styles.emptyStateSubtext}>
           Orders you place at checkout will show up here.
         </Text>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.screen}>
+    // edges={['top']} only insets the top edge — this screen sits inside a
+    // bottom tab bar that already accounts for the bottom safe area, so we
+    // don't want to double-pad the bottom.
+    <SafeAreaView style={styles.screen} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Your Orders</Text>
       </View>
@@ -166,7 +188,7 @@ export default function OrdersScreen() {
           <OrderCard key={order.id} order={order} />
         ))}
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -293,17 +315,28 @@ const styles = StyleSheet.create({
     color: colors.textDark,
   },
 
-  trackButton: {
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
+  actionButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    marginTop: 10,
     minHeight: 44,
     borderRadius: 8,
     borderWidth: 1,
+  },
+  trackButton: {
     borderColor: colors.primaryGreen,
     backgroundColor: `${colors.primaryGreen}0D`,
+  },
+  messageButton: {
+    borderColor: colors.primaryGreen,
+    backgroundColor: '#FFFFFF',
   },
   trackButtonText: {
     fontSize: 13,

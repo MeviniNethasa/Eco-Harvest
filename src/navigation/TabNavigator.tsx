@@ -15,6 +15,7 @@ import CartScreen from '../screens/CartScreen';
 import OrdersScreen from '../screens/OrdersScreen';
 import DeliveryTrackingScreen from '../screens/DeliveryTrackingScreen';
 import BulkOrdersScreen from '../screens/BulkOrdersScreen';
+import ChatScreen from '../screens/ChatScreen';
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
@@ -67,6 +68,10 @@ function OrdersStackNavigator() {
         component={DeliveryTrackingScreen}
         options={{ headerShown: true, title: 'Delivery Tracking' }}
       />
+      {/* Screen M-06: e.g. a "Message Farmer" action on an active order.
+          headerShown stays false — ChatScreen renders its own Header Bar +
+          Transaction Summary Header per design.md Section 3.1. */}
+      <OrdersStack.Screen name="Chat" component={ChatScreen} />
     </OrdersStack.Navigator>
   );
 }
@@ -216,6 +221,25 @@ export default function TabNavigator() {
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="person-outline" size={size} color={color} />
             ),
+          }}
+        />
+        {/* Screen M-06: registered on the root Tab.Navigator (per
+            RootTabParamList in src/types/index.ts) so any tab — e.g. a
+            "Message Farmer" action on MarketplaceScreen or OrdersScreen —
+            can reach Chat directly via navigation.navigate('Chat', { ... }),
+            not just the Orders stack above. `tabBarButton: () => null`
+            alone still reserves the item's flex slot in the tab bar,
+            leaving a blank gap after Profile; `tabBarItemStyle: { display:
+            'none' }` is what actually removes it from layout, so both are
+            needed together. Deliberately NOT touching `tabBarStyle` here —
+            that would hide the *entire* bar (all items) whenever Chat is
+            focused, which isn't what we want. */}
+        <Tab.Screen
+          name="Chat"
+          component={ChatScreen}
+          options={{
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
           }}
         />
       </Tab.Navigator>
