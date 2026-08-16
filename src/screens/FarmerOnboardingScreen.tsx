@@ -16,10 +16,21 @@ import {
   Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { BankDetails, Crop, CropCategory, FarmerProfile, VerificationStatus } from '../types';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import {
+  BankDetails,
+  ChatMessage,
+  ChatThread,
+  Crop,
+  CropCategory,
+  FarmerProfile,
+  VerificationStatus,
+} from '../types';
 import {
   clearFarmerProfile,
   generateFarmerId,
+  getAllChatThreads,
+  getChatMessages,
   getFarmerProfile,
   publishCrop,
   saveFarmerProfile,
@@ -54,6 +65,26 @@ const BADGE_CONFIG: Record<VerificationStatus, { bg: string; fg: string; label: 
 };
 
 const PLACEHOLDER_CROP_IMAGE = 'https://placehold.co/400x400/16A34A/FFFFFF?text=Crop';
+
+// ---------------------------------------------------------------------------
+// Customer Inquiries & Messages (Farmer Portal → Screen M-06 chat threads)
+// ---------------------------------------------------------------------------
+
+/** One chat thread paired with its most recent message, for the preview list. */
+interface ThreadWithPreview {
+  thread: ChatThread;
+  lastMessage: ChatMessage | null;
+}
+
+/** Short relative-ish timestamp for the inquiry list ("2:45 PM"). */
+function formatInquiryTimestamp(iso: string): string {
+  try {
+    const date = new Date(iso);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Small reusable field wrapper (label + mandatory error state)
@@ -141,11 +172,17 @@ const VerificationBadge: React.FC<{ status: VerificationStatus }> = ({ status })
 // Screen
 // ---------------------------------------------------------------------------
 export default function FarmerOnboardingScreen() {
+  const navigation = useNavigation();
+
   // --- Persisted profile / view-mode state ---
   const [profile, setProfile] = useState<FarmerProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  // --- Customer Inquiries & Messages (Dashboard / View Mode 2 only) ---
+  const [chatThreads, setChatThreads] = useState<ThreadWithPreview[]>([]);
+  const [isLoadingThreads, setIsLoadingThreads] = useState(true);
 
   // --- Onboarding form fields (shared by first-time setup + "Edit Profile") ---
   const [legalName, setLegalName] = useState('');
@@ -183,6 +220,42 @@ export default function FarmerOnboardingScreen() {
       setIsLoadingProfile(false);
     })();
   }, []);
+
+  // ---- Load Customer Inquiries & Messages (all active chat threads) ----
+  // Pulls in each thread's most recent message for the preview card, then
+  // sorts most-recently-active first so new inquiries surface at the top.
+  const loadChatThreads = React.useCallback(async () => {
+    setIsLoadingThreads(true);
+    try {
+      const threads = await getAllChatThreads();
+      const withPreviews = await Promise.all(
+        threads.map(async (thread): Promise<ThreadWithPreview> => {
+          const messages = await getChatMessages(thread.id);
+          const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+          return { thread, lastMessage };
+        })
+      );
+      withPreviews.sort((a, b) => {
+        const aTime = a.lastMessage ? new Date(a.lastMessage.timestamp).getTime() : 0;
+        const bTime = b.lastMessage ? new Date(b.lastMessage.timestamp).getTime() : 0;
+        return bTime - aTime;
+      });
+      setChatThreads(withPreviews);
+    } catch (err) {
+      console.error('Failed to load chat threads for Farmer Portal:', err);
+    } finally {
+      setIsLoadingThreads(false);
+    }
+  }, []);
+
+  // Refresh every time the Farmer Portal tab/screen regains focus (e.g.
+  // coming back from replying in ChatScreen) so new/updated previews show
+  // up without a manual pull-to-refresh.
+  useFocusEffect(
+    React.useCallback(() => {
+      loadChatThreads();
+    }, [loadChatThreads])
+  );
 
   const resetOnboardingFormFields = () => {
     setLegalName('');
@@ -658,6 +731,57 @@ export default function FarmerOnboardingScreen() {
               </Pressable>
             </View>
 
+            {/* ---------------- Customer Inquiries & Messages ---------------- */}
+            <View style={styles.card}>
+              <Text style={styles.sectionHeading}>Customer Inquiries & Messages</Text>
+
+              {isLoadingThreads ? (
+                <ActivityIndicator color={tokens.colorPrimaryGreen} />
+              ) : chatThreads.length === 0 ? (
+                <Text style={styles.helperText}>No customer messages yet.</Text>
+              ) : (
+                chatThreads.map(({ thread, lastMessage }) => (
+                  <View key={thread.id} style={styles.inquiryCard}>
+                    <View style={styles.inquiryHeaderRow}>
+                      <Text style={styles.inquiryCustomerName} numberOfLines={1}>
+                        {thread.recipientName}
+                      </Text>
+                      {lastMessage && (
+                        <Text style={styles.inquiryTimestamp}>
+                          {formatInquiryTimestamp(lastMessage.timestamp)}
+                        </Text>
+                      )}
+                    </View>
+
+                    <Text style={styles.inquiryContext} numberOfLines={1}>
+                      Order #{thread.orderId.replace(/^#/, '')} • {thread.cropSummary}
+                    </Text>
+
+                    <Text style={styles.inquiryPreview} numberOfLines={2}>
+                      {lastMessage
+                        ? lastMessage.isBlocked
+                          ? '[ Message Blocked: off-platform contact info ]'
+                          : lastMessage.text
+                        : 'No messages yet.'}
+                    </Text>
+
+                    <Pressable
+                      style={[styles.secondaryButton, styles.inquiryReplyButton]}
+                      onPress={() =>
+                        (navigation as any).navigate('Chat', {
+                          threadId: thread.id,
+                          recipientName: thread.recipientName,
+                          userRole: 'FARMER',
+                        })
+                      }
+                    >
+                      <Text style={styles.secondaryButtonText}>Reply to Customer</Text>
+                    </Pressable>
+                  </View>
+                ))
+              )}
+            </View>
+
             {/* ---------------- Product Publisher ---------------- */}
             <View style={styles.card}>
               <Text style={styles.sectionHeading}>Publish New Crop to Marketplace</Text>
@@ -1034,5 +1158,48 @@ const styles = StyleSheet.create({
   },
   devButtonDangerText: {
     color: '#FCA5A5',
+  },
+  inquiryCard: {
+    borderWidth: 1,
+    borderColor: tokens.colorBorderGray,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    marginBottom: 10,
+  },
+  inquiryHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  inquiryCustomerName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: tokens.colorTextDark,
+    marginRight: 8,
+  },
+  inquiryTimestamp: {
+    fontSize: 11,
+    color: tokens.colorTextMuted,
+  },
+  inquiryContext: {
+    fontSize: 12,
+    color: tokens.colorSecondaryLeaf,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  inquiryPreview: {
+    fontSize: 13,
+    color: tokens.colorTextMuted,
+    marginBottom: 10,
+  },
+  inquiryReplyButton: {
+    marginTop: 0,
+    marginBottom: 0,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 16,
+    minHeight: 36,
   },
 });

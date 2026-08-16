@@ -1407,7 +1407,7 @@ async function saveAllChatMessages(
   }
 }
 
-async function getAllChatThreads(): Promise<ChatThreadMap> {
+async function getAllChatThreadsMap(): Promise<ChatThreadMap> {
   try {
     const raw = await AsyncStorage.getItem(CHAT_THREADS_STORAGE_KEY);
     return raw ? (JSON.parse(raw) as ChatThreadMap) : {};
@@ -1415,6 +1415,21 @@ async function getAllChatThreads(): Promise<ChatThreadMap> {
     console.error('Failed to read chat threads from storage:', error);
     return {};
   }
+}
+
+/**
+ * Returns every active chat thread as a flat array, regardless of which
+ * customer/order it belongs to. Backs the Farmer Portal dashboard's
+ * "Customer Inquiries & Messages" section (FarmerOnboardingScreen, View
+ * Mode 2), which needs to list every inbound thread rather than a single
+ * thread by id the way ChatScreen does. Order is not guaranteed — sort by
+ * message recency (see `getChatMessages`) if a specific order matters to
+ * the caller. Never throws — returns `[]` on a storage read failure rather
+ * than failing the dashboard mount.
+ */
+export async function getAllChatThreads(): Promise<ChatThread[]> {
+  const map = await getAllChatThreadsMap();
+  return Object.values(map);
 }
 
 async function saveAllChatThreads(map: ChatThreadMap): Promise<void> {
@@ -1453,7 +1468,7 @@ export async function getChatThread(
   threadId: string,
   overrides?: { recipientName?: string; orderId?: string }
 ): Promise<ChatThread> {
-  const all = await getAllChatThreads();
+  const all = await getAllChatThreadsMap();
   const existing = all[threadId];
   if (existing) {
     // A caller-supplied recipientName (e.g. from a "Message <Farmer>" nav
@@ -1528,6 +1543,11 @@ export async function getChatMessages(threadId: string): Promise<ChatMessage[]> 
  * this thread (`subscribeToChatMessages`) so an open ChatScreen updates
  * immediately.
  *
+ * `senderRole` is optional and defaults to `'CUSTOMER'` (ChatScreen's
+ * original, customer-facing default). Pass `'FARMER'` explicitly when the
+ * message is being sent from the Farmer Portal dashboard/reply flow so it's
+ * recorded — and rendered — as coming from the farmer side of the thread.
+ *
  * Throws if `threadId` or `text` (after trimming) is empty — callers
  * should catch this and keep the user on the input rather than assuming
  * success.
@@ -1535,7 +1555,7 @@ export async function getChatMessages(threadId: string): Promise<ChatMessage[]> 
 export async function sendChatMessage(
   threadId: string,
   text: string,
-  senderRole: ChatMessage['senderRole']
+  senderRole: ChatMessage['senderRole'] = 'CUSTOMER'
 ): Promise<ChatMessage> {
   const trimmed = typeof text === 'string' ? text.trim() : '';
   if (!threadId || !trimmed) {

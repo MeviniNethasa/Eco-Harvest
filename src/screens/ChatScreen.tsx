@@ -29,15 +29,22 @@ import {
   subscribeToChatMessages,
 } from '../utils/storage';
 
-// The chat screen is rendered from the perspective of the customer talking
-// to a farmer counterpart — matches the rest of the app's default
-// customer-facing flow (Marketplace/Cart/Orders), with "Switch to Farmer
-// Mode" handled separately on the Profile tab. This constant is what
-// decides bubble alignment/color (Section 3.2's "Current User" vs
-// "Counterpart") and which role the input bar + sandbox presets send as.
-const CURRENT_USER_ROLE: ChatMessage['senderRole'] = 'CUSTOMER';
+// The chat screen can be opened from either side of a conversation: the
+// default customer-facing flow (Marketplace/Cart/Orders → "Message
+// Farmer"), or the Farmer Portal dashboard's "Reply to Customer" action
+// (FarmerOnboardingScreen, View Mode 2), which navigates in with
+// `userRole: 'FARMER'`. Whichever role is active decides bubble
+// alignment/color (Section 3.2's "Current User" vs "Counterpart") and which
+// role the input bar + sandbox presets send as. Defaults to `'CUSTOMER'` to
+// preserve the screen's original behavior when no `userRole` param is
+// passed at all.
+const DEFAULT_USER_ROLE: ChatMessage['senderRole'] = 'CUSTOMER';
 
-type ChatRouteParams = { threadId?: string; recipientName?: string };
+type ChatRouteParams = {
+  threadId?: string;
+  recipientName?: string;
+  userRole?: ChatMessage['senderRole'];
+};
 
 const SANDBOX_PRESETS = [
   { label: '[ Test Normal Msg ]', text: 'When will the 100kg carrots be dispatched?' },
@@ -69,6 +76,18 @@ export default function ChatScreen() {
   const [draft, setDraft] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+
+  // Which side of the conversation this screen instance renders as. Seeded
+  // once from the nav param (defaulting to CUSTOMER) and from then on only
+  // changed via the Dev Sandbox "Switch Role" button, not by re-reading the
+  // route param on every render.
+  const [currentUserRole, setCurrentUserRole] = useState<ChatMessage['senderRole']>(
+    route.params?.userRole ?? DEFAULT_USER_ROLE
+  );
+
+  const handleSwitchRole = useCallback(() => {
+    setCurrentUserRole((prev) => (prev === 'FARMER' ? 'CUSTOMER' : 'FARMER'));
+  }, []);
 
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -120,7 +139,7 @@ export default function ChatScreen() {
 
       setIsSending(true);
       try {
-        await sendChatMessage(threadId, text, CURRENT_USER_ROLE);
+        await sendChatMessage(threadId, text, currentUserRole);
         setDraft('');
       } catch (error) {
         console.error('Failed to send chat message:', error);
@@ -128,7 +147,7 @@ export default function ChatScreen() {
         setIsSending(false);
       }
     },
-    [draft, isSending, threadId]
+    [draft, isSending, threadId, currentUserRole]
   );
 
   const handleSandboxPreset = useCallback((presetText: string) => {
@@ -153,6 +172,16 @@ export default function ChatScreen() {
     );
   }
 
+  // "Chat with Customer: [Customer Name]" when replying as the farmer;
+  // otherwise just the counterpart's name, matching the screen's original
+  // customer-facing header. The thread only stores one counterpart name
+  // (`recipientName`) regardless of role, so it's reused here as the
+  // customer's display name in farmer mode.
+  const headerTitle =
+    currentUserRole === 'FARMER'
+      ? `Chat with Customer: ${thread.recipientName}`
+      : thread.recipientName;
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
@@ -171,7 +200,7 @@ export default function ChatScreen() {
           </Pressable>
           <View style={styles.headerNameRow}>
             <Text style={styles.headerName} numberOfLines={1}>
-              {thread.recipientName}
+              {headerTitle}
             </Text>
             {thread.isVerified && (
               <View style={styles.verifiedBadge}>
@@ -231,7 +260,7 @@ export default function ChatScreen() {
               );
             }
 
-            const isCurrentUser = message.senderRole === CURRENT_USER_ROLE;
+            const isCurrentUser = message.senderRole === currentUserRole;
             return (
               <View
                 key={message.id}
@@ -289,7 +318,9 @@ export default function ChatScreen() {
 
         {/* 3.4 Developer Sandbox Toolbar */}
         <View style={styles.sandboxToolbar}>
-          <Text style={styles.sandboxLabel}>Dev Sandbox</Text>
+          <Text style={styles.sandboxLabel}>
+            Dev Sandbox — Viewing as {currentUserRole === 'FARMER' ? 'Farmer' : 'Customer'}
+          </Text>
           <View style={styles.sandboxButtonRow}>
             {SANDBOX_PRESETS.map((preset) => (
               <Pressable
@@ -300,6 +331,14 @@ export default function ChatScreen() {
                 <Text style={styles.sandboxButtonText}>{preset.label}</Text>
               </Pressable>
             ))}
+            <Pressable
+              style={[styles.sandboxButton, styles.sandboxButtonRole]}
+              onPress={handleSwitchRole}
+            >
+              <Text style={[styles.sandboxButtonText, styles.sandboxButtonRoleText]}>
+                [ Switch Role: Customer / Farmer ]
+              </Text>
+            </Pressable>
           </View>
         </View>
       </View>
@@ -573,5 +612,12 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontWeight: '600',
     color: '#15803D',
+  },
+  sandboxButtonRole: {
+    borderColor: '#111827',
+    backgroundColor: '#111827',
+  },
+  sandboxButtonRoleText: {
+    color: '#FFFFFF',
   },
 });

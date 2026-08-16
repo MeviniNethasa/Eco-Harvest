@@ -354,11 +354,14 @@ export type RootTabParamList = {
   Profile: undefined;
   // Screen M-06: reachable directly from the root tab navigator (e.g. a
   // "Message Farmer" action on Marketplace) in addition to being nested in
-  // the Orders stack below. Both `threadId` and `recipientName` are
-  // optional — if `threadId` is omitted, ChatScreen/getChatThread
+  // the Orders stack below. `threadId`, `recipientName`, and `userRole` are
+  // all optional — if `threadId` is omitted, ChatScreen/getChatThread
   // (storage.ts) generates a new one and seeds it from `recipientName` and
-  // the most recent order.
-  Chat: { threadId?: string; recipientName?: string };
+  // the most recent order. `userRole` picks which side of the conversation
+  // ChatScreen renders as (defaults to `'CUSTOMER'`) — the Farmer Portal
+  // dashboard (FarmerOnboardingScreen) passes `'FARMER'` when a farmer taps
+  // "Reply to Customer" on an inbound inquiry.
+  Chat: { threadId?: string; recipientName?: string; userRole?: 'CUSTOMER' | 'FARMER' };
 };
 
 // Cart tab is its own stack so Screen M-03 (cart/checkout) can push into
@@ -377,5 +380,5 @@ export type CartStackParamList = {
 export type OrdersStackParamList = {
   OrdersHome: undefined;
   OrderTracking: { orderId: string };
-  Chat: { threadId?: string; recipientName?: string };
+  Chat: { threadId?: string; recipientName?: string; userRole?: 'CUSTOMER' | 'FARMER' };
 };
