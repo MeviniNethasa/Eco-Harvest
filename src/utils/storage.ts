@@ -21,6 +21,7 @@ import {
   OrderStatus,
   OrderSummary,
   PaymentDetails,
+  ProductReview,
   UnavailableListItem,
 } from '../types';
 
@@ -32,6 +33,7 @@ const TRACKING_STORAGE_KEY = '@ecoharvest/delivery-tracking';
 const SUBSCRIPTIONS_STORAGE_KEY = '@ecoharvest/bulk-subscriptions';
 const CHAT_MESSAGES_STORAGE_KEY = '@ecoharvest/chat-messages';
 const CHAT_THREADS_STORAGE_KEY = '@ecoharvest/chat-threads';
+const REVIEWS_STORAGE_KEY = '@ecoharvest/product-reviews';
 
 /**
  * Simple pub/sub (same pattern as the crop listeners further down) so the
@@ -640,6 +642,96 @@ export async function createOrder(payment: PaymentDetails): Promise<Order> {
   await clearCart();
 
   return order;
+}
+
+// ---------------------------------------------------------------------------
+// Product Reviews (Screen M-07: Hardware-Restricted Product Review Modal)
+// ---------------------------------------------------------------------------
+
+/**
+ * Simple pub/sub (same pattern as orders/cart/crops above) so any mounted
+ * screen can react immediately when a review is submitted, without a
+ * global state library.
+ */
+type ReviewListener = (reviews: ProductReview[]) => void;
+const reviewListeners = new Set<ReviewListener>();
+
+function notifyReviewListeners(reviews: ProductReview[]): void {
+  reviewListeners.forEach((listener) => listener(reviews));
+}
+
+/**
+ * Subscribe to real-time review updates. Returns an unsubscribe function.
+ */
+export function subscribeToReviews(listener: ReviewListener): () => void {
+  reviewListeners.add(listener);
+  return () => reviewListeners.delete(listener);
+}
+
+/**
+ * Generates a reasonably unique review id, same approach as
+ * generateCropId/generateOrderId.
+ */
+export function generateReviewId(): string {
+  return `review_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Retrieve every persisted product review, regardless of order.
+ */
+export async function getProductReviews(): Promise<ProductReview[]> {
+  try {
+    const raw = await AsyncStorage.getItem(REVIEWS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as ProductReview[]) : [];
+  } catch (error) {
+    console.error('Failed to read product reviews from storage:', error);
+    return [];
+  }
+}
+
+async function saveProductReviews(reviews: ProductReview[]): Promise<void> {
+  await AsyncStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(reviews));
+  notifyReviewListeners(reviews);
+}
+
+/**
+ * Fetch the review already submitted for an order, if any — used by
+ * OrdersScreen to decide between rendering "[ Write Review ]" and
+ * "[ Reviewed ✓ ]" without relying solely on the denormalized
+ * `Order.isReviewed` flag.
+ */
+export async function getReviewByOrderId(orderId: string): Promise<ProductReview | null> {
+  const reviews = await getProductReviews();
+  return reviews.find((r) => r.orderId === orderId) ?? null;
+}
+
+/**
+ * Persists a Screen M-07 review (replacing any prior review with the same
+ * `id`, so a caller can safely retry) and flips the matching order's
+ * `isReviewed` to `true` so OrdersScreen's button swaps to
+ * "[ Reviewed ✓ ]" on next render without a separate round trip.
+ *
+ * Throws if `orderId` doesn't match a persisted order, or if either
+ * storage write fails — callers should catch this and keep the modal open
+ * rather than assuming success.
+ */
+export async function submitProductReview(review: ProductReview): Promise<ProductReview> {
+  const order = await getOrderById(review.orderId);
+  if (!order) {
+    throw new Error(`submitProductReview: no order found with id "${review.orderId}".`);
+  }
+
+  const reviews = await getProductReviews();
+  const updatedReviews = [review, ...reviews.filter((r) => r.id !== review.id)];
+  await saveProductReviews(updatedReviews);
+
+  const orders = await getOrders();
+  const updatedOrders = orders.map((o) =>
+    o.id === review.orderId ? { ...o, isReviewed: true } : o
+  );
+  await saveOrders(updatedOrders);
+
+  return review;
 }
 
 // ---------------------------------------------------------------------------

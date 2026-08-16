@@ -59,6 +59,13 @@ function CartStackNavigator() {
 
 const OrdersStack = createNativeStackNavigator<OrdersStackParamList>();
 
+// Screen M-07 (Hardware-Restricted Product Review Modal) is intentionally
+// NOT a stack screen/route here. It's rendered by OrdersScreen itself as a
+// React Native `<Modal>` (see ReviewModal.tsx), which mounts in its own
+// native overlay above the entire app — including this bottom tab bar —
+// so it needs no route, no extra param list entry, and no changes to the
+// tab/stack layout below to avoid colliding with or being clipped by the
+// tab bar.
 function OrdersStackNavigator() {
   return (
     <OrdersStack.Navigator screenOptions={{ headerShown: false }}>

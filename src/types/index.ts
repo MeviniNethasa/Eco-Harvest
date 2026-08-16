@@ -130,6 +130,11 @@ export interface Order {
   payment: PaymentDetails;
   status: OrderStatus;
   createdAt: string; // ISO timestamp
+  // Screen M-07: set true once `submitProductReview` (storage.ts) has
+  // persisted a review for this order. Optional/undefined is treated the
+  // same as `false` (not yet reviewed) for orders created before this
+  // field existed.
+  isReviewed?: boolean;
 }
 
 export interface LocationFilter {
@@ -343,6 +348,31 @@ export interface ChatThread {
   paymentStatus: string; // e.g. "Escrow Locked" / "Pending Payment"
   recipientName: string;
   isVerified: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Screen M-07: Hardware-Restricted Product Review Modal
+// ---------------------------------------------------------------------------
+
+export type ReviewQualityTag = 'FRESH' | 'MINOR_ISSUES' | 'DAMAGED';
+
+/**
+ * A single customer review of a delivered order (design.md Screen M-07).
+ * Requires a hardware-captured `photoUri` and a derived `aiFreshnessScore`
+ * before it can be submitted (enforced by ReviewModal's submit-button
+ * guardrail, Section 4.5) — `submitProductReview` (storage.ts) persists the
+ * review and flips the matching `Order.isReviewed` to `true`.
+ */
+export interface ProductReview {
+  id: string;
+  orderId: string;
+  cropId: string;
+  rating: number; // 1-5
+  qualityTag: ReviewQualityTag;
+  photoUri: string;
+  aiFreshnessScore: number; // 0-100, mock YOLOv8 pipeline output
+  comment?: string;
+  createdAt: string; // ISO timestamp
 }
 
 // Navigation param lists

@@ -8,6 +8,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Order, OrderStatus, OrdersStackParamList } from '../types';
 import { getOrders, subscribeToOrders } from '../utils/storage';
+import ReviewModal from '../components/ReviewModal';
 
 // "Active" orders are the ones a courier is still moving toward the buyer
 // for — delivered/cancelled orders have nothing left to track on Screen M-04.
@@ -59,10 +60,19 @@ function StatusBadge({ status }: { status: OrderStatus }) {
   );
 }
 
-function OrderCard({ order }: { order: Order }) {
+function OrderCard({
+  order,
+  onWriteReview,
+}: {
+  order: Order;
+  onWriteReview: (order: Order) => void;
+}) {
   const navigation = useNavigation<OrdersNavProp>();
   const itemCount = order.items.reduce((sum, item) => sum + item.quantity, 0);
   const isTrackable = TRACKABLE_STATUSES.includes(order.status);
+  // Screen M-07: only delivered orders are eligible for a review.
+  const isDelivered = order.status === 'delivered';
+  const isReviewed = Boolean(order.isReviewed);
 
   return (
     <View style={styles.card}>
@@ -124,6 +134,28 @@ function OrderCard({ order }: { order: Order }) {
           <Text style={styles.trackButtonText}>Message Farmer</Text>
         </Pressable>
       </View>
+
+      {/* Screen M-07: only delivered orders can be reviewed. Already-
+          reviewed orders show a disabled confirmation pill instead of
+          re-opening the modal. */}
+      {isDelivered && (
+        <View style={styles.actionRow}>
+          {isReviewed ? (
+            <View style={[styles.actionButton, styles.reviewedButton]}>
+              <Ionicons name="checkmark-circle" size={16} color={colors.primaryGreen} />
+              <Text style={styles.trackButtonText}>Reviewed ✓</Text>
+            </View>
+          ) : (
+            <Pressable
+              style={[styles.actionButton, styles.reviewButton]}
+              onPress={() => onWriteReview(order)}
+            >
+              <Ionicons name="star-outline" size={16} color="#FFFFFF" />
+              <Text style={styles.reviewButtonText}>Write Review</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -131,11 +163,29 @@ function OrderCard({ order }: { order: Order }) {
 export default function OrdersScreen() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  // Screen M-07: which order (if any) the review modal is currently open
+  // for. `null` keeps the modal closed.
+  const [reviewOrder, setReviewOrder] = useState<Order | null>(null);
 
   const refreshOrders = useCallback(async () => {
     const latest = await getOrders();
     setOrders(latest);
     setLoading(false);
+  }, []);
+
+  const handleWriteReview = useCallback((order: Order) => {
+    setReviewOrder(order);
+  }, []);
+
+  const handleReviewModalClose = useCallback(() => {
+    setReviewOrder(null);
+  }, []);
+
+  const handleReviewSubmitted = useCallback(() => {
+    // submitProductReview already persists `isReviewed` on the order and
+    // notifies subscribeToOrders listeners, so the live subscription below
+    // will refresh this list — closing here is just for immediate feedback.
+    setReviewOrder(null);
   }, []);
 
   // Catch up whenever the Orders tab regains focus.
@@ -185,9 +235,16 @@ export default function OrdersScreen() {
         showsVerticalScrollIndicator={false}
       >
         {orders.map((order) => (
-          <OrderCard key={order.id} order={order} />
+          <OrderCard key={order.id} order={order} onWriteReview={handleWriteReview} />
         ))}
       </ScrollView>
+
+      <ReviewModal
+        visible={reviewOrder !== null}
+        order={reviewOrder}
+        onClose={handleReviewModalClose}
+        onSubmitted={handleReviewSubmitted}
+      />
     </SafeAreaView>
   );
 }
@@ -342,5 +399,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: colors.primaryGreen,
+  },
+
+  // Screen M-07
+  reviewButton: {
+    borderColor: colors.primaryGreen,
+    backgroundColor: colors.primaryGreen,
+  },
+  reviewButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  reviewedButton: {
+    borderColor: colors.borderGray,
+    backgroundColor: colors.bgCard,
   },
 });
