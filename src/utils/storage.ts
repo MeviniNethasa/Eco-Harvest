@@ -2,6 +2,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  AppNotification,
   BulkMatchItem,
   BulkMatchResult,
   BulkSubscription,
@@ -17,6 +18,7 @@ import {
   FarmerProfile,
   FarmGroup,
   GeoCoordinate,
+  NotificationRole,
   Order,
   OrderStatus,
   OrderSummary,
@@ -34,6 +36,7 @@ const SUBSCRIPTIONS_STORAGE_KEY = '@ecoharvest/bulk-subscriptions';
 const CHAT_MESSAGES_STORAGE_KEY = '@ecoharvest/chat-messages';
 const CHAT_THREADS_STORAGE_KEY = '@ecoharvest/chat-threads';
 const REVIEWS_STORAGE_KEY = '@ecoharvest/product-reviews';
+const NOTIFICATIONS_STORAGE_KEY = '@ecoharvest/notifications';
 
 /**
  * Simple pub/sub (same pattern as the crop listeners further down) so the
@@ -1669,4 +1672,253 @@ export async function sendChatMessage(
 
   await saveAllChatMessages(updated, threadId);
   return message;
+}
+
+// ---------------------------------------------------------------------------
+// System Notification Push Matrix (Notification.md: role-routed push alerts,
+// slide-out NotificationModal, badge counters, Developer Sandbox simulation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates a reasonably unique notification id, same approach as
+ * `generateCropId` / `generateOrderId` / `generateReviewId` above.
+ */
+export function generateNotificationId(): string {
+  return `notif_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Helper for seeding believable relative timestamps ("5m ago", "1h ago")
+ * on the initial sample notifications below, without hard-coding an ISO
+ * string that immediately looks stale.
+ */
+function minutesAgoIso(minutes: number): string {
+  return new Date(Date.now() - minutes * 60 * 1000).toISOString();
+}
+
+/**
+ * Initial sample notifications for both the Customer and Farmer viewport
+ * channels (Notification.md Section 2.1 / 2.2), seeded once into
+ * AsyncStorage the first time `getAllNotifications` is ever called on a
+ * fresh install. Message copy matches the design spec's channel matrix
+ * verbatim so the demo UI reads exactly like the spec's examples.
+ */
+const INITIAL_NOTIFICATIONS: AppNotification[] = [
+  // --- 2.1 Customer Viewport Channel ---
+  {
+    id: 'notif_seed_customer_order_accepted',
+    role: 'CUSTOMER',
+    title: 'Order Accepted',
+    message: 'Farmer has verified harvest stock and locked inventory',
+    category: 'ORDER',
+    isRead: false,
+    timestamp: minutesAgoIso(4),
+  },
+  {
+    id: 'notif_seed_customer_dispatch',
+    role: 'CUSTOMER',
+    title: 'Uber Dispatch',
+    message: 'Driver assigned and en route to farm pickup',
+    category: 'DISPATCH',
+    isRead: false,
+    timestamp: minutesAgoIso(18),
+  },
+  {
+    id: 'notif_seed_customer_recommendation',
+    role: 'CUSTOMER',
+    title: 'Nearby Match',
+    message: 'New SLSI verified organic farmer available in your district',
+    category: 'RECOMMENDATION',
+    isRead: true,
+    timestamp: minutesAgoIso(240),
+  },
+  // --- 2.2 Farmer Viewport Channel ---
+  {
+    id: 'notif_seed_farmer_new_order',
+    role: 'FARMER',
+    title: 'New Incoming Order',
+    message: 'Direct order locked. Handshake OTP generated',
+    category: 'ORDER',
+    isRead: false,
+    timestamp: minutesAgoIso(9),
+  },
+  {
+    id: 'notif_seed_farmer_bulk_match',
+    role: 'FARMER',
+    title: 'AI Demand Match',
+    message: 'New bulk requirement query matches your active crops',
+    category: 'BULK_MATCH',
+    isRead: false,
+    timestamp: minutesAgoIso(35),
+  },
+  {
+    id: 'notif_seed_farmer_low_stock',
+    role: 'FARMER',
+    title: 'High Priority Alert',
+    message: 'Inventory levels fallen below configured threshold',
+    category: 'INVENTORY',
+    isRead: false,
+    timestamp: minutesAgoIso(60),
+  },
+  {
+    id: 'notif_seed_farmer_review',
+    role: 'FARMER',
+    title: 'Customer Feedback',
+    message: 'New rating and freshness feedback received for your harvest',
+    category: 'REVIEW',
+    isRead: true,
+    timestamp: minutesAgoIso(320),
+  },
+];
+
+/**
+ * Simple pub/sub (same pattern as cart/crops/orders/reviews above) so any
+ * mounted screen — e.g. a header Bell icon's unread badge, or an open
+ * NotificationModal — can react immediately whenever a notification is
+ * added or its read state changes, without a global state library.
+ * Listeners receive the *full* unfiltered list; callers filter by role
+ * themselves (see `getNotifications`).
+ */
+type NotificationListener = (notifications: AppNotification[]) => void;
+const notificationListeners = new Set<NotificationListener>();
+
+function notifyNotificationListeners(notifications: AppNotification[]): void {
+  notificationListeners.forEach((listener) => listener(notifications));
+}
+
+/**
+ * Subscribe to real-time notification updates across both viewport
+ * channels. Returns an unsubscribe function.
+ *
+ * Typical usage in a header Bell icon:
+ *
+ *   useEffect(() => subscribeToNotifications((all) => {
+ *     setUnreadCount(all.filter((n) => n.role === 'CUSTOMER' && !n.isRead).length);
+ *   }), []);
+ */
+export function subscribeToNotifications(listener: NotificationListener): () => void {
+  notificationListeners.add(listener);
+  return () => notificationListeners.delete(listener);
+}
+
+/**
+ * Retrieve every persisted notification (both channels), lazily seeding
+ * `INITIAL_NOTIFICATIONS` into AsyncStorage on first-ever access so the
+ * Notification Drawer never opens empty on a fresh install. Never throws —
+ * falls back to `[]` on a storage read failure.
+ */
+async function getAllNotifications(): Promise<AppNotification[]> {
+  try {
+    const raw = await AsyncStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
+    if (raw) {
+      return JSON.parse(raw) as AppNotification[];
+    }
+    await AsyncStorage.setItem(
+      NOTIFICATIONS_STORAGE_KEY,
+      JSON.stringify(INITIAL_NOTIFICATIONS)
+    );
+    return INITIAL_NOTIFICATIONS;
+  } catch (error) {
+    console.error('Failed to read notifications from storage:', error);
+    return [];
+  }
+}
+
+/**
+ * Persist the full notifications array and notify all live subscribers.
+ * Throws on failure — same convention as `saveCrops`/`saveOrders` above, so
+ * a failed write never leaves the UI believing a mark-as-read/simulated
+ * push actually landed.
+ */
+async function saveAllNotifications(notifications: AppNotification[]): Promise<void> {
+  await AsyncStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(notifications));
+  notifyNotificationListeners(notifications);
+}
+
+/**
+ * Retrieve notifications, optionally filtered to a single viewport channel
+ * (Notification.md Section 3.2's "Role Viewport Switcher" tab), newest
+ * first. Omitting `role` returns both channels combined.
+ */
+export async function getNotifications(
+  role?: NotificationRole
+): Promise<AppNotification[]> {
+  const all = await getAllNotifications();
+  const filtered = role ? all.filter((n) => n.role === role) : all;
+  return [...filtered].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+}
+
+/**
+ * Convenience count for a header Bell icon's unread badge (Notification.md
+ * Section 3.1). Omitting `role` counts unread across both channels.
+ */
+export async function getUnreadNotificationCount(role?: NotificationRole): Promise<number> {
+  const notifications = await getNotifications(role);
+  return notifications.filter((n) => !n.isRead).length;
+}
+
+/**
+ * Marks a single notification as read (tapping a card in the drawer).
+ * No-ops (returns the list unchanged) if `id` doesn't match anything
+ * rather than throwing, since a stale/already-removed id shouldn't crash
+ * the drawer.
+ */
+export async function markNotificationAsRead(id: string): Promise<AppNotification[]> {
+  const all = await getAllNotifications();
+  const updated = all.map((n) => (n.id === id ? { ...n, isRead: true } : n));
+  await saveAllNotifications(updated);
+  return updated;
+}
+
+/**
+ * Backs the drawer's "[ Mark All as Read ]" button (Notification.md
+ * Section 3.2). Marks every notification as read by default; passing
+ * `role` scopes it to just the currently active viewport tab, so marking
+ * all Customer alerts read doesn't silently clear unread Farmer alerts.
+ */
+export async function markAllNotificationsAsRead(
+  role?: NotificationRole
+): Promise<AppNotification[]> {
+  const all = await getAllNotifications();
+  const updated = all.map((n) =>
+    !role || n.role === role ? { ...n, isRead: true } : n
+  );
+  await saveAllNotifications(updated);
+  return updated;
+}
+
+/**
+ * Pushes a new notification into a channel — the entry point for both the
+ * Section 3.3 Developer Sandbox Simulation Bar presets ("Sim: Order
+ * Accepted", "Sim: Driver Dispatch", etc.) and any real app event that
+ * should surface a push alert later (e.g. `createOrder` or
+ * `updateDeliveryStatus` calling this directly). Always starts unread with
+ * a fresh timestamp — callers only supply the content fields.
+ */
+export async function addNotification(
+  notification: Omit<AppNotification, 'id' | 'isRead' | 'timestamp'>
+): Promise<AppNotification[]> {
+  const all = await getAllNotifications();
+  const newNotification: AppNotification = {
+    ...notification,
+    id: generateNotificationId(),
+    isRead: false,
+    timestamp: new Date().toISOString(),
+  };
+  const updated = [newNotification, ...all];
+  await saveAllNotifications(updated);
+  return updated;
+}
+
+/**
+ * Clears every persisted notification (useful for resetting demo data from
+ * a Developer Sandbox "Reset" control, mirroring `clearCrops`/
+ * `clearFarmerProfile` above). Re-seeding happens automatically on the next
+ * `getAllNotifications` call.
+ */
+export async function clearNotifications(): Promise<void> {
+  await AsyncStorage.removeItem(NOTIFICATIONS_STORAGE_KEY);
+  notifyNotificationListeners([]);
 }

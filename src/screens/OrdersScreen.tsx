@@ -7,8 +7,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Order, OrderStatus, OrdersStackParamList } from '../types';
-import { getOrders, subscribeToOrders } from '../utils/storage';
+import { getOrders, getUnreadNotificationCount, subscribeToNotifications, subscribeToOrders } from '../utils/storage';
 import ReviewModal from '../components/ReviewModal';
+import NotificationModal from '../components/NotificationModal';
 
 // "Active" orders are the ones a courier is still moving toward the buyer
 // for — delivered/cancelled orders have nothing left to track on Screen M-04.
@@ -160,12 +161,44 @@ function OrderCard({
   );
 }
 
+// System Notification Push Matrix: header Bell icon + unread badge counter
+// (Notification.md Section 3.1). Lives in its own component so the badge
+// count can update live via `subscribeToNotifications` without re-rendering
+// the rest of the header.
+function NotificationBell({ onPress }: { onPress: () => void }) {
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const refreshUnreadCount = useCallback(async () => {
+    const count = await getUnreadNotificationCount('CUSTOMER');
+    setUnreadCount(count);
+  }, []);
+
+  useEffect(() => {
+    refreshUnreadCount();
+    const unsubscribe = subscribeToNotifications(refreshUnreadCount);
+    return unsubscribe;
+  }, [refreshUnreadCount]);
+
+  return (
+    <Pressable style={styles.bellButton} onPress={onPress} hitSlop={8}>
+      <Ionicons name="notifications-outline" size={22} color={colors.textDark} />
+      {unreadCount > 0 && (
+        <View style={styles.bellBadge}>
+          <Text style={styles.bellBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
 export default function OrdersScreen() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   // Screen M-07: which order (if any) the review modal is currently open
   // for. `null` keeps the modal closed.
   const [reviewOrder, setReviewOrder] = useState<Order | null>(null);
+  // System Notification Push Matrix: whether the notification drawer is open.
+  const [notificationsVisible, setNotificationsVisible] = useState(false);
 
   const refreshOrders = useCallback(async () => {
     const latest = await getOrders();
@@ -186,6 +219,14 @@ export default function OrdersScreen() {
     // notifies subscribeToOrders listeners, so the live subscription below
     // will refresh this list — closing here is just for immediate feedback.
     setReviewOrder(null);
+  }, []);
+
+  const handleOpenNotifications = useCallback(() => {
+    setNotificationsVisible(true);
+  }, []);
+
+  const handleCloseNotifications = useCallback(() => {
+    setNotificationsVisible(false);
   }, []);
 
   // Catch up whenever the Orders tab regains focus.
@@ -213,11 +254,20 @@ export default function OrdersScreen() {
   if (orders.length === 0) {
     return (
       <SafeAreaView style={styles.emptyState} edges={['top']}>
+        <View style={styles.emptyStateBellRow}>
+          <NotificationBell onPress={handleOpenNotifications} />
+        </View>
         <Ionicons name="receipt-outline" size={48} color={colors.textMuted} />
         <Text style={styles.emptyStateText}>No orders yet</Text>
         <Text style={styles.emptyStateSubtext}>
           Orders you place at checkout will show up here.
         </Text>
+
+        <NotificationModal
+          visible={notificationsVisible}
+          onClose={handleCloseNotifications}
+          initialRole="CUSTOMER"
+        />
       </SafeAreaView>
     );
   }
@@ -229,6 +279,7 @@ export default function OrdersScreen() {
     <SafeAreaView style={styles.screen} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Your Orders</Text>
+        <NotificationBell onPress={handleOpenNotifications} />
       </View>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -244,6 +295,12 @@ export default function OrdersScreen() {
         order={reviewOrder}
         onClose={handleReviewModalClose}
         onSubmitted={handleReviewSubmitted}
+      />
+
+      <NotificationModal
+        visible={notificationsVisible}
+        onClose={handleCloseNotifications}
+        initialRole="CUSTOMER"
       />
     </SafeAreaView>
   );
@@ -262,7 +319,9 @@ const styles = StyleSheet.create({
   },
   header: {
     height: 56,
-    justifyContent: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderGray,
@@ -286,6 +345,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     backgroundColor: colors.bgMain,
   },
+  emptyStateBellRow: {
+    position: 'absolute',
+    top: 8,
+    right: 16,
+  },
   emptyStateText: {
     fontSize: 16,
     fontWeight: '600',
@@ -296,6 +360,31 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
     textAlign: 'center',
+  },
+
+  // System Notification Push Matrix: header Bell icon + unread badge.
+  bellButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bellBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  bellBadgeText: {
+    fontSize: 10,
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 
   card: {

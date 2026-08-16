@@ -375,6 +375,49 @@ export interface ProductReview {
   createdAt: string; // ISO timestamp
 }
 
+// ---------------------------------------------------------------------------
+// System Notification Push Matrix (design.md — role-based push alerts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which viewport/channel a notification belongs to (design.md Section 2:
+ * "Notifications are dynamically routed based on the active viewport
+ * context"). Drives both storage filtering (`getNotifications(role)` in
+ * storage.ts) and the Role Viewport Switcher tab in `NotificationModal`.
+ */
+export type NotificationRole = 'CUSTOMER' | 'FARMER';
+
+/**
+ * Coarse notification type, used to pick an icon/color in
+ * `NotificationModal` and to distinguish the six push events called out in
+ * design.md Section 2 (Order Accepted, Dispatch, Recommendation, Low Stock,
+ * Bulk Match, and Review Receipt).
+ */
+export type NotificationCategory =
+  | 'ORDER'
+  | 'DISPATCH'
+  | 'RECOMMENDATION'
+  | 'INVENTORY'
+  | 'REVIEW'
+  | 'BULK_MATCH';
+
+/**
+ * A single push notification (design.md Section 3.2, `NotificationModal.tsx`).
+ * Persisted centrally (see storage.ts's `@ecoharvest/notifications` key) and
+ * shared across both the Customer and Farmer viewports — `role` is what
+ * separates the two channels, not two separate storage keys, so the
+ * Developer Sandbox toolbar can simulate either channel from one screen.
+ */
+export interface AppNotification {
+  id: string;
+  role: NotificationRole;
+  title: string;
+  message: string;
+  category: NotificationCategory;
+  isRead: boolean;
+  timestamp: string; // ISO timestamp
+}
+
 // Navigation param lists
 export type RootTabParamList = {
   Marketplace: undefined;
