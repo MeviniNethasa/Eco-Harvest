@@ -18,6 +18,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import {
+  AppNotification,
   BankDetails,
   ChatMessage,
   ChatThread,
@@ -27,13 +28,18 @@ import {
   VerificationStatus,
 } from '../types';
 import {
+  addNotification,
   clearFarmerProfile,
   generateFarmerId,
   getAllChatThreads,
   getChatMessages,
   getFarmerProfile,
+  getNotifications,
+  markAllNotificationsAsRead,
+  markNotificationAsRead,
   publishCrop,
   saveFarmerProfile,
+  subscribeToNotifications,
 } from '../utils/storage';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
 
@@ -84,6 +90,35 @@ function formatInquiryTimestamp(iso: string): string {
   } catch {
     return '';
   }
+}
+
+// ---------------------------------------------------------------------------
+// System Alerts & Notifications (Farmer Dashboard — role: 'FARMER' channel)
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders a compact relative-time label ("Just now", "5m ago", "3h ago",
+ * "2d ago") for a notification's ISO timestamp, matching
+ * FARMER_NOTIFICATIONS_PORTAL.md / Notification.md's own examples. Falls
+ * back to the raw ISO string if the timestamp can't be parsed rather than
+ * throwing.
+ */
+function formatNotificationRelativeTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+
+  const diffMs = Date.now() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'Just now';
+
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+
+  const diffDay = Math.floor(diffHr / 24);
+  return `${diffDay}d ago`;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +219,12 @@ export default function FarmerOnboardingScreen() {
   const [chatThreads, setChatThreads] = useState<ThreadWithPreview[]>([]);
   const [isLoadingThreads, setIsLoadingThreads] = useState(true);
 
+  // --- System Alerts & Notifications (Dashboard / View Mode 2 only) ---
+  // Strictly the 'FARMER' channel — Customer Alerts live in NotificationModal
+  // (opened from OrdersScreen), not here. See FARMER_NOTIFICATIONS_PORTAL.md.
+  const [farmerNotifications, setFarmerNotifications] = useState<AppNotification[]>([]);
+  const [isLoadingNotifications, setIsLoadingNotifications] = useState(true);
+
   // --- Onboarding form fields (shared by first-time setup + "Edit Profile") ---
   const [legalName, setLegalName] = useState('');
   const [mobileNumber, setMobileNumber] = useState('');
@@ -256,6 +297,37 @@ export default function FarmerOnboardingScreen() {
       loadChatThreads();
     }, [loadChatThreads])
   );
+
+  // ---- Load System Alerts & Notifications (role: 'FARMER' channel) ----
+  const loadFarmerNotifications = React.useCallback(async () => {
+    setIsLoadingNotifications(true);
+    try {
+      const notifications = await getNotifications('FARMER');
+      setFarmerNotifications(notifications);
+    } catch (err) {
+      console.error('Failed to load farmer notifications:', err);
+    } finally {
+      setIsLoadingNotifications(false);
+    }
+  }, []);
+
+  // Catch up whenever the Farmer Portal regains focus, same as chat threads.
+  useFocusEffect(
+    React.useCallback(() => {
+      loadFarmerNotifications();
+    }, [loadFarmerNotifications])
+  );
+
+  // Stay live while mounted, so a simulated push (from the sandbox toolbar
+  // below, or a real one triggered elsewhere) shows up immediately without
+  // needing a focus event. Re-filters the full unfiltered list down to the
+  // 'FARMER' channel — the Customer channel is out of scope here.
+  useEffect(() => {
+    const unsubscribe = subscribeToNotifications((all) => {
+      setFarmerNotifications(all.filter((n) => n.role === 'FARMER'));
+    });
+    return unsubscribe;
+  }, []);
 
   const resetOnboardingFormFields = () => {
     setLegalName('');
@@ -425,6 +497,79 @@ export default function FarmerOnboardingScreen() {
   const handleCancelEdit = () => {
     if (profile) prefillFormFromProfile(profile); // discard unsaved edits
     setIsEditingProfile(false);
+  };
+
+  // ---- System Alerts & Notifications: read-state handlers ----
+  const handleNotificationPress = async (notification: AppNotification) => {
+    if (notification.isRead) return;
+    try {
+      await markNotificationAsRead(notification.id);
+    } catch (err) {
+      console.error('Failed to mark notification as read:', err);
+    }
+  };
+
+  const handleMarkAllFarmerNotificationsRead = async () => {
+    try {
+      await markAllNotificationsAsRead('FARMER');
+    } catch (err) {
+      console.error('Failed to mark all farmer notifications as read:', err);
+    }
+  };
+
+  // ---- System Alerts & Notifications: Developer Sandbox presets ----
+  // Each preset pushes a 'FARMER'-channel notification whose copy matches
+  // FARMER_NOTIFICATIONS_PORTAL.md's alert list exactly.
+  const handleSimNewOrder = async () => {
+    try {
+      await addNotification({
+        role: 'FARMER',
+        title: 'New Incoming Order',
+        message: 'Direct order locked. Handshake OTP generated',
+        category: 'ORDER',
+      });
+    } catch (err) {
+      console.error('Failed to simulate New Order notification:', err);
+    }
+  };
+
+  const handleSimBulkMatch = async () => {
+    try {
+      await addNotification({
+        role: 'FARMER',
+        title: 'AI Demand Match',
+        message: 'New bulk requirement query matches your active crops',
+        category: 'BULK_MATCH',
+      });
+    } catch (err) {
+      console.error('Failed to simulate Bulk Match notification:', err);
+    }
+  };
+
+  const handleSimLowStock = async () => {
+    try {
+      await addNotification({
+        role: 'FARMER',
+        title: 'High Priority Alert',
+        message: 'Inventory levels fallen below configured threshold',
+        category: 'INVENTORY',
+      });
+    } catch (err) {
+      console.error('Failed to simulate Low Stock notification:', err);
+    }
+  };
+
+  const handleSimNewReview = async () => {
+    try {
+      await addNotification({
+        role: 'FARMER',
+        title: 'Customer Feedback',
+        message: 'New rating and freshness feedback received for your harvest',
+        category: 'REVIEW',
+      });
+    } catch (err) {
+      console.error('Failed to simulate New Review notification:', err);
+    }
   };
 
   // ---- Developer Sandbox: manual verification-status toggles ----
@@ -729,6 +874,74 @@ export default function FarmerOnboardingScreen() {
               >
                 <Text style={styles.secondaryButtonText}>Edit Profile Details</Text>
               </Pressable>
+            </View>
+
+            {/* ---------------- System Alerts & Notifications ---------------- */}
+            <View style={styles.card}>
+              <View style={styles.notificationHeaderRow}>
+                <View>
+                  <Text style={styles.sectionHeading}>System Alerts & Notifications</Text>
+                  <Text style={styles.notificationSubheading}>
+                    {farmerNotifications.filter((n) => !n.isRead).length} unread
+                  </Text>
+                </View>
+                <Pressable onPress={handleMarkAllFarmerNotificationsRead} hitSlop={8}>
+                  <Text style={styles.notificationMarkAllText}>Mark All as Read</Text>
+                </Pressable>
+              </View>
+
+              {isLoadingNotifications ? (
+                <ActivityIndicator color={tokens.colorPrimaryGreen} />
+              ) : farmerNotifications.length === 0 ? (
+                <Text style={styles.helperText}>No alerts yet.</Text>
+              ) : (
+                farmerNotifications
+                  .slice()
+                  .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                  .map((notification) => (
+                    <Pressable
+                      key={notification.id}
+                      style={[
+                        styles.notificationCard,
+                        notification.isRead
+                          ? styles.notificationCardRead
+                          : styles.notificationCardUnread,
+                      ]}
+                      onPress={() => handleNotificationPress(notification)}
+                    >
+                      {!notification.isRead && <View style={styles.notificationUnreadDot} />}
+                      <Text style={styles.notificationTitle} numberOfLines={1}>
+                        {notification.title}
+                      </Text>
+                      <Text style={styles.notificationMessage}>{notification.message}</Text>
+                      <Text style={styles.notificationTimestamp}>
+                        {formatNotificationRelativeTime(notification.timestamp)}
+                      </Text>
+                    </Pressable>
+                  ))
+              )}
+
+              {/* Developer Sandbox: simulate incoming farmer alerts directly
+                  on the dashboard, per FARMER_NOTIFICATIONS_PORTAL.md. */}
+              <View style={styles.notificationSandbox}>
+                <Text style={styles.notificationSandboxLabel}>DEV SANDBOX — FARMER ALERTS</Text>
+                <View style={styles.notificationSandboxRow}>
+                  <Pressable style={styles.notificationSandboxButton} onPress={handleSimNewOrder}>
+                    <Text style={styles.notificationSandboxButtonText}>Sim: New Order</Text>
+                  </Pressable>
+                  <Pressable style={styles.notificationSandboxButton} onPress={handleSimBulkMatch}>
+                    <Text style={styles.notificationSandboxButtonText}>Sim: Bulk Match</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.notificationSandboxRow}>
+                  <Pressable style={styles.notificationSandboxButton} onPress={handleSimLowStock}>
+                    <Text style={styles.notificationSandboxButtonText}>Sim: Low Stock</Text>
+                  </Pressable>
+                  <Pressable style={styles.notificationSandboxButton} onPress={handleSimNewReview}>
+                    <Text style={styles.notificationSandboxButtonText}>Sim: New Review</Text>
+                  </Pressable>
+                </View>
+              </View>
             </View>
 
             {/* ---------------- Customer Inquiries & Messages ---------------- */}
@@ -1158,6 +1371,94 @@ const styles = StyleSheet.create({
   },
   devButtonDangerText: {
     color: '#FCA5A5',
+  },
+  // ---------------- System Alerts & Notifications ----------------
+  notificationHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  notificationSubheading: {
+    fontSize: 12,
+    color: tokens.colorTextMuted,
+    marginTop: 2,
+  },
+  notificationMarkAllText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.colorPrimaryGreen,
+  },
+  notificationCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+  },
+  notificationCardUnread: {
+    backgroundColor: '#F0FDF4',
+    borderColor: `${tokens.colorPrimaryGreen}33`,
+  },
+  notificationCardRead: {
+    backgroundColor: tokens.colorBgCard,
+    borderColor: tokens.colorBorderGray,
+  },
+  notificationUnreadDot: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: tokens.colorPrimaryGreen,
+  },
+  notificationTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: tokens.colorTextDark,
+    marginBottom: 2,
+    paddingRight: 16,
+  },
+  notificationMessage: {
+    fontSize: 12,
+    color: tokens.colorTextDark,
+    marginBottom: 4,
+  },
+  notificationTimestamp: {
+    fontSize: 11,
+    color: tokens.colorTextMuted,
+  },
+  notificationSandbox: {
+    marginTop: 4,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: tokens.colorBorderGray,
+    gap: 8,
+  },
+  notificationSandboxLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: tokens.colorTextMuted,
+  },
+  notificationSandboxRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  notificationSandboxButton: {
+    flex: 1,
+    minHeight: 36,
+    borderWidth: 1,
+    borderColor: tokens.colorBorderGray,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  notificationSandboxButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.colorTextDark,
   },
   inquiryCard: {
     borderWidth: 1,

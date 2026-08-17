@@ -90,46 +90,55 @@ function NotificationCard({
   );
 }
 
+// Architectural adjustment (FARMER_NOTIFICATIONS_PORTAL.md): Farmer Alerts
+// no longer live here — they now render exclusively inside the Farmer
+// Dashboard's own "System Alerts & Notifications" section
+// (FarmerOnboardingScreen.tsx). This modal is hard-scoped to the Customer
+// channel only, and the role-switcher tab that used to live here has been
+// removed entirely — every read/write below always targets `'CUSTOMER'`.
+const NOTIFICATION_ROLE: NotificationRole = 'CUSTOMER';
+
 interface NotificationModalProps {
   visible: boolean;
   onClose: () => void;
-  // Which viewport tab is active when the drawer first opens. Defaults to
-  // 'CUSTOMER' since most entry points (e.g. OrdersScreen) are customer-
-  // facing; the Farmer Portal can pass 'FARMER' instead.
+  /**
+   * @deprecated This modal is now permanently scoped to Customer Alerts —
+   * there's no longer a role tab to preselect. Kept as an optional, unused
+   * prop purely so existing call sites (e.g. OrdersScreen.tsx, which still
+   * passes `initialRole="CUSTOMER"`) keep type-checking without an edit.
+   */
   initialRole?: NotificationRole;
 }
 
-export default function NotificationModal({
-  visible,
-  onClose,
-  initialRole = 'CUSTOMER',
-}: NotificationModalProps) {
-  const [activeRole, setActiveRole] = useState<NotificationRole>(initialRole);
+export default function NotificationModal({ visible, onClose }: NotificationModalProps) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   const refresh = useCallback(async () => {
-    const all = await getNotifications();
-    setNotifications(all);
+    const customerNotifications = await getNotifications(NOTIFICATION_ROLE);
+    setNotifications(customerNotifications);
   }, []);
 
-  // Re-sync the active tab and refresh data every time the drawer opens.
+  // Refresh every time the drawer opens.
   useEffect(() => {
     if (visible) {
-      setActiveRole(initialRole);
       refresh();
     }
-  }, [visible, initialRole, refresh]);
+  }, [visible, refresh]);
 
   // Stay live while mounted, so a simulated push (or a real one triggered
   // elsewhere in the app) shows up immediately without re-opening the modal.
+  // The full unfiltered list comes through the subscription; re-filter to
+  // this modal's fixed CUSTOMER channel before storing it.
   useEffect(() => {
-    const unsubscribe = subscribeToNotifications(setNotifications);
+    const unsubscribe = subscribeToNotifications((all) => {
+      setNotifications(all.filter((n) => n.role === NOTIFICATION_ROLE));
+    });
     return unsubscribe;
   }, []);
 
-  const visibleNotifications = notifications
-    .filter((n) => n.role === activeRole)
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  const visibleNotifications = [...notifications].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
 
   const unreadCount = visibleNotifications.filter((n) => !n.isRead).length;
 
@@ -140,13 +149,10 @@ export default function NotificationModal({
   }, []);
 
   const handleMarkAllRead = useCallback(() => {
-    markAllNotificationsAsRead(activeRole);
-  }, [activeRole]);
+    markAllNotificationsAsRead(NOTIFICATION_ROLE);
+  }, []);
 
-  // --- Section 3.3: Developer Sandbox Simulation Bar ---
-  // Each preset pushes a notification whose copy matches the corresponding
-  // channel entry in Notification.md Section 2, then switches the active
-  // tab to that channel so the result is immediately visible.
+  // --- Section 3.3: Developer Sandbox Simulation Bar (Customer presets) ---
   const handleSimOrderAccepted = useCallback(async () => {
     await addNotification({
       role: 'CUSTOMER',
@@ -154,7 +160,6 @@ export default function NotificationModal({
       message: 'Farmer has verified harvest stock and locked inventory',
       category: 'ORDER',
     });
-    setActiveRole('CUSTOMER');
   }, []);
 
   const handleSimDriverDispatch = useCallback(async () => {
@@ -164,27 +169,15 @@ export default function NotificationModal({
       message: 'Driver assigned and en route to farm pickup',
       category: 'DISPATCH',
     });
-    setActiveRole('CUSTOMER');
   }, []);
 
-  const handleSimBulkMatch = useCallback(async () => {
+  const handleSimNearbyMatch = useCallback(async () => {
     await addNotification({
-      role: 'FARMER',
-      title: 'AI Demand Match',
-      message: 'New bulk requirement query matches your active crops',
-      category: 'BULK_MATCH',
+      role: 'CUSTOMER',
+      title: 'Nearby Match',
+      message: 'New SLSI verified organic farmer available in your district',
+      category: 'RECOMMENDATION',
     });
-    setActiveRole('FARMER');
-  }, []);
-
-  const handleSimLowStock = useCallback(async () => {
-    await addNotification({
-      role: 'FARMER',
-      title: 'High Priority Alert',
-      message: 'Inventory levels fallen below configured threshold',
-      category: 'INVENTORY',
-    });
-    setActiveRole('FARMER');
   }, []);
 
   return (
@@ -202,7 +195,7 @@ export default function NotificationModal({
             <View>
               <Text style={styles.headerTitle}>Notifications</Text>
               <Text style={styles.headerSubtitle}>
-                {unreadCount} unread {unreadCount === 1 ? 'alert' : 'alerts'}
+                {unreadCount} unread {unreadCount === 1 ? 'alert' : 'alerts'} • Customer Alerts
               </Text>
             </View>
             <View style={styles.headerActions}>
@@ -213,29 +206,6 @@ export default function NotificationModal({
                 <Ionicons name="close" size={20} color={colors.textMuted} />
               </Pressable>
             </View>
-          </View>
-
-          <View style={styles.tabRow}>
-            <Pressable
-              style={[styles.tab, activeRole === 'CUSTOMER' && styles.tabActive]}
-              onPress={() => setActiveRole('CUSTOMER')}
-            >
-              <Text
-                style={[styles.tabText, activeRole === 'CUSTOMER' && styles.tabTextActive]}
-              >
-                Customer Alerts
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.tab, activeRole === 'FARMER' && styles.tabActive]}
-              onPress={() => setActiveRole('FARMER')}
-            >
-              <Text
-                style={[styles.tabText, activeRole === 'FARMER' && styles.tabTextActive]}
-              >
-                Farmer Alerts
-              </Text>
-            </Pressable>
           </View>
 
           <ScrollView
@@ -270,11 +240,8 @@ export default function NotificationModal({
               </Pressable>
             </View>
             <View style={styles.sandboxButtonRow}>
-              <Pressable style={styles.sandboxButton} onPress={handleSimBulkMatch}>
-                <Text style={styles.sandboxButtonText}>Sim: Bulk Match</Text>
-              </Pressable>
-              <Pressable style={styles.sandboxButton} onPress={handleSimLowStock}>
-                <Text style={styles.sandboxButtonText}>Sim: Low Stock Alert</Text>
+              <Pressable style={styles.sandboxButton} onPress={handleSimNearbyMatch}>
+                <Text style={styles.sandboxButtonText}>Sim: Nearby Match</Text>
               </Pressable>
             </View>
           </View>
@@ -337,40 +304,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  tabRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  tab: {
-    flex: 1,
-    minHeight: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.borderGray,
-    backgroundColor: colors.bgCard,
-  },
-  tabActive: {
-    borderColor: colors.primaryGreen,
-    backgroundColor: `${colors.primaryGreen}1A`,
-  },
-  tabText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textMuted,
-  },
-  tabTextActive: {
-    color: colors.primaryGreen,
-  },
-
   list: {
     flexGrow: 0,
   },
   listContent: {
     paddingHorizontal: 16,
+    paddingTop: 12,
     paddingBottom: 8,
     gap: 8,
   },
