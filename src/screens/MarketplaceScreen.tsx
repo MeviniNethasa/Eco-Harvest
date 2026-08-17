@@ -17,6 +17,7 @@ import { MOCK_CROPS } from '../data/mockData';
 import { getCrops, subscribeToCrops } from '../utils/storage';
 import ProductCard from '../components/ProductCard';
 import FilterModal from '../components/FilterModal';
+import HeaderBranding from '../components/HeaderBranding';
 
 export default function MarketplaceScreen() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -131,6 +132,13 @@ export default function MarketplaceScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Brand Row — Screen 3.2 (HeaderBranding), sits above the sticky
+          search/filter row rather than replacing it, so the search UX is
+          untouched. */}
+      <View style={styles.brandRow}>
+        <HeaderBranding />
+      </View>
+
       {/* Sticky Top Header */}
       <View style={styles.header}>
         <View style={styles.searchBox}>
@@ -192,6 +200,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FAFAFA',
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E2EB',
   },
   header: {
     height: 56,
