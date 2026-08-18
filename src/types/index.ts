@@ -29,13 +29,21 @@ export interface Crop {
 // ---------------------------------------------------------------------------
 
 /**
- * Three-state SLSI verification lifecycle. Uploading a certificate moves a
- * farmer from `UNVERIFIED` to `PENDING_VERIFICATION` — it does NOT
- * auto-grant `VERIFIED`, since there's no admin review portal yet to
- * actually confirm the certificate. `VERIFIED` is only reachable via the
- * Screen M-02 Developer Sandbox toolbar until that portal exists.
+ * SLSI verification lifecycle. Uploading a certificate moves a farmer from
+ * `UNVERIFIED` to `PENDING_VERIFICATION`. From there, `VERIFIED` or
+ * `REJECTED` is set by an admin reviewing the application on Screen A-01
+ * (`AdminVerificationDeskScreen` — see `updateVerificationStatus` in
+ * storage.ts), which also mirrors its decision onto the on-device
+ * `FarmerProfile` so the Farmer Portal (`FarmerOnboardingScreen`) reflects
+ * it on next focus. Both `VERIFIED` and `REJECTED` remain reachable from the
+ * Screen M-02 Developer Sandbox toolbar too, for testing without going
+ * through the admin desk.
  */
-export type VerificationStatus = 'UNVERIFIED' | 'PENDING_VERIFICATION' | 'VERIFIED';
+export type VerificationStatus =
+  | 'UNVERIFIED'
+  | 'PENDING_VERIFICATION'
+  | 'VERIFIED'
+  | 'REJECTED';
 
 export interface BankDetails {
   bankName: string;
@@ -54,7 +62,14 @@ export interface BankDetails {
  * `isSLSIVerified` is a denormalized boolean mirror of
  * `verificationStatus === 'VERIFIED'`, kept so `publishCrop` (storage.ts)
  * and the `Crop`/marketplace UI can keep reading a plain boolean without
- * needing to know about the 3-state enum.
+ * needing to know about the enum's other states.
+ *
+ * `commissionRate` is the active EcoHarvest marketplace commission
+ * percentage for this farmer (e.g. `5` or `2.5`). It defaults to `5` for
+ * any profile that hasn't been through an admin decision yet, and is kept
+ * in sync with `verificationStatus` by `updateVerificationStatus`
+ * (storage.ts, Screen A-01's admin override) and by the Screen M-02
+ * Developer Sandbox toggles: `VERIFIED` -> `2.5`, everything else -> `5`.
  */
 export interface FarmerProfile {
   id: string;
@@ -68,6 +83,7 @@ export interface FarmerProfile {
   slsiCertificateUri: string | null;
   verificationStatus: VerificationStatus;
   isSLSIVerified: boolean;
+  commissionRate?: number;
 }
 
 export interface CartItem {
@@ -416,6 +432,57 @@ export interface AppNotification {
   category: NotificationCategory;
   isRead: boolean;
   timestamp: string; // ISO timestamp
+}
+
+// ---------------------------------------------------------------------------
+// Screen A-01: Verification Request Desk (SLSI Certificate Audit)
+// Web-only Desktop Admin Command Panel — architecturally isolated from the
+// mobile app's `TabNavigator.tsx` and mobile mode switchers (see design.md
+// Section 2). Reuses `BankDetails` and `GeoCoordinate` from above rather
+// than redefining bank/coordinate shapes.
+// ---------------------------------------------------------------------------
+
+/**
+ * Admin-facing decision states for a submitted SLSI application (design.md
+ * Section 3). Intentionally a separate, narrower union from the farmer-side
+ * `VerificationStatus` above (no `UNVERIFIED` state — a request only exists
+ * once a certificate has actually been submitted for review).
+ */
+export type AdminVerificationStatus = 'PENDING' | 'VERIFIED' | 'REJECTED';
+
+/**
+ * Farm GPS location shown in the Right Profile Pane (design.md Section 2:
+ * "Farm GPS Coordinates (Latitude / Longitude) & District"). Extends the
+ * plain `GeoCoordinate` used by Screen M-04's delivery tracking with the
+ * district label the admin profile sheet also needs.
+ */
+export interface FarmCoordinates extends GeoCoordinate {
+  district: string;
+}
+
+/**
+ * One row in the Screen A-01 Verification Request queue — a merchant's
+ * submitted SLSI certificate application as seen from the Admin Command
+ * Panel. `farmerId` is the join key back to the on-device `FarmerProfile.id`
+ * (Screen M-02): when `updateVerificationStatus` (storage.ts) resolves an
+ * application whose `farmerId` matches the currently-onboarded farmer, it
+ * also patches that `FarmerProfile` in place so the Farmer Portal reflects
+ * the same `verificationStatus` / `commissionRate` on next focus (design.md
+ * Section 3, "Farmer Portal Sync"). For requests seeded by the Developer
+ * Sandbox toolbar (`Load Valid SLSI App` / `Load Suspicious App`) that don't
+ * correspond to a real on-device profile, that sync step is simply a no-op.
+ */
+export interface VerificationRequest {
+  farmerId: string;
+  legalName: string;
+  businessRegistrationNo: string;
+  mobileNumber: string;
+  bankDetails: BankDetails;
+  farmCoordinates: FarmCoordinates;
+  slsiCertificateUrl: string;
+  verificationStatus: AdminVerificationStatus;
+  commissionRate: number; // 5 while PENDING/REJECTED, 2.5 once VERIFIED
+  submittedAt: string; // ISO timestamp
 }
 
 // Navigation param lists

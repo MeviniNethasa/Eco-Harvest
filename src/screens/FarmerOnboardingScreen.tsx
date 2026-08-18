@@ -42,7 +42,6 @@ import {
   subscribeToNotifications,
 } from '../utils/storage';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
-import HeaderBranding from '../components/HeaderBranding';
 
 // ---------------------------------------------------------------------------
 // Design tokens (from design.md — Screen M-02 spec)
@@ -69,7 +68,20 @@ const BADGE_CONFIG: Record<VerificationStatus, { bg: string; fg: string; label: 
     label: 'Submitted • Pending Admin Verification',
   },
   VERIFIED: { bg: '#DCFCE7', fg: tokens.colorPrimaryGreen, label: 'SLSI Organic Verified' },
+  REJECTED: {
+    bg: '#FEE2E2',
+    fg: tokens.colorAlertCrimson,
+    label: 'Application Rejected by Admin',
+  },
 };
+
+/**
+ * Default marketplace commission rate for a farmer who hasn't been through
+ * an admin decision yet (Screen A-01). Matches `COMMISSION_RATE_DEFAULT` in
+ * storage.ts.
+ */
+const DEFAULT_COMMISSION_RATE = 5;
+const VERIFIED_COMMISSION_RATE = 2.5;
 
 const PLACEHOLDER_CROP_IMAGE = 'https://placehold.co/400x400/16A34A/FFFFFF?text=Crop';
 
@@ -239,6 +251,7 @@ export default function FarmerOnboardingScreen() {
   const [accountHolderName, setAccountHolderName] = useState('');
   const [certificateUri, setCertificateUri] = useState<string | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<VerificationStatus>('UNVERIFIED');
+  const [commissionRate, setCommissionRate] = useState<number>(DEFAULT_COMMISSION_RATE);
   const [onboardingErrors, setOnboardingErrors] = useState<Record<string, string>>({});
 
   // --- Product Publisher fields (Dashboard / View Mode 2 only) ---
@@ -254,14 +267,30 @@ export default function FarmerOnboardingScreen() {
   const districts = useMemo(() => getDistricts(province), [province]);
   const cities = useMemo(() => getCities(province, district), [province, district]);
 
-  // ---- Load the persisted profile once on mount ----
-  useEffect(() => {
-    (async () => {
-      const existing = await getFarmerProfile();
-      setProfile(existing);
-      setIsLoadingProfile(false);
-    })();
+  // ---- Load the persisted profile ----
+  const loadProfile = React.useCallback(async () => {
+    const existing = await getFarmerProfile();
+    setProfile(existing);
+    setIsLoadingProfile(false);
   }, []);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  // Re-fetch whenever the Farmer Portal regains focus so a verification
+  // decision made on Screen A-01 (Admin Verification Desk) — a VERIFIED /
+  // REJECTED status and the resulting commission tier — shows up
+  // immediately, per design.md Section 3 "Farmer Portal Sync". Skipped
+  // while the farmer is mid-edit on the onboarding form so an admin update
+  // landing in the background can't clobber unsaved changes.
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!isEditingProfile) {
+        loadProfile();
+      }
+    }, [isEditingProfile, loadProfile])
+  );
 
   // ---- Load Customer Inquiries & Messages (all active chat threads) ----
   // Pulls in each thread's most recent message for the preview card, then
@@ -343,6 +372,7 @@ export default function FarmerOnboardingScreen() {
     setAccountHolderName('');
     setCertificateUri(null);
     setVerificationStatus('UNVERIFIED');
+    setCommissionRate(DEFAULT_COMMISSION_RATE);
     setOnboardingErrors({});
   };
 
@@ -359,6 +389,7 @@ export default function FarmerOnboardingScreen() {
     setAccountHolderName(p.bankDetails.accountHolderName);
     setCertificateUri(p.slsiCertificateUri);
     setVerificationStatus(p.verificationStatus);
+    setCommissionRate(p.commissionRate ?? DEFAULT_COMMISSION_RATE);
     setOnboardingErrors({});
   };
 
@@ -469,6 +500,10 @@ export default function FarmerOnboardingScreen() {
         slsiCertificateUri: certificateUri,
         verificationStatus,
         isSLSIVerified: verificationStatus === 'VERIFIED',
+        // Preserve whatever commission tier is already in effect (default,
+        // or the one set by an admin's Screen A-01 decision) — editing
+        // profile/contact details here shouldn't reset it.
+        commissionRate: profile?.commissionRate ?? commissionRate,
       };
 
       const saved = await saveFarmerProfile(profileToSave);
@@ -574,14 +609,20 @@ export default function FarmerOnboardingScreen() {
   };
 
   // ---- Developer Sandbox: manual verification-status toggles ----
+  // Mirrors the commission-tier rule Screen A-01's admin override applies:
+  // VERIFIED -> 2.5%, everything else -> the 5% default.
   const applyDevVerificationStatus = async (status: VerificationStatus) => {
+    const nextCommissionRate =
+      status === 'VERIFIED' ? VERIFIED_COMMISSION_RATE : DEFAULT_COMMISSION_RATE;
     setVerificationStatus(status);
+    setCommissionRate(nextCommissionRate);
     if (!profile) return; // no profile saved yet — just previews in the form
     try {
       const updated = await saveFarmerProfile({
         ...profile,
         verificationStatus: status,
         isSLSIVerified: status === 'VERIFIED',
+        commissionRate: nextCommissionRate,
       });
       setProfile(updated);
     } catch (err) {
@@ -690,13 +731,8 @@ export default function FarmerOnboardingScreen() {
   // ---------------------------------------------------------------------
   if (isLoadingProfile) {
     return (
-      <View style={styles.loadingScreen}>
-        <View style={styles.brandRow}>
-          <HeaderBranding />
-        </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator color={tokens.colorPrimaryGreen} size="large" />
-        </View>
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator color={tokens.colorPrimaryGreen} size="large" />
       </View>
     );
   }
@@ -708,15 +744,6 @@ export default function FarmerOnboardingScreen() {
       style={{ flex: 1, backgroundColor: tokens.colorBgMain }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {/* Brand Row — Header Branding Standardization Spec Section 3.2.
-          Rendered as this screen's own top header container, above the
-          scroll content. The ProfileStack's native header (back button +
-          "Farmer Portal" title, see TabNavigator.tsx) is untouched, so
-          back navigation keeps working exactly as before. */}
-      <View style={styles.brandRow}>
-        <HeaderBranding />
-      </View>
-
       <ScrollView
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 140 }]}
         keyboardShouldPersistTaps="handled"
@@ -806,6 +833,9 @@ export default function FarmerOnboardingScreen() {
               </Pressable>
 
               <VerificationBadge status={verificationStatus} />
+              <Text style={[styles.helperText, { marginTop: 8, marginBottom: 0 }]}>
+                Active Marketplace Commission: {commissionRate}%
+              </Text>
             </View>
 
             {/* ---------------- Bank Payout Routing ---------------- */}
@@ -882,6 +912,9 @@ export default function FarmerOnboardingScreen() {
                 {profile.city}, {profile.district}, {profile.province}
               </Text>
               <VerificationBadge status={profile.verificationStatus} />
+              <Text style={[styles.helperText, { marginTop: 8, marginBottom: 0 }]}>
+                Active Marketplace Commission: {profile.commissionRate ?? DEFAULT_COMMISSION_RATE}%
+              </Text>
 
               <Pressable
                 style={[styles.secondaryButton, { marginTop: 12, marginBottom: 0 }]}
@@ -1122,6 +1155,12 @@ export default function FarmerOnboardingScreen() {
           </Pressable>
           <Pressable
             style={[styles.devButton, styles.devButtonDanger]}
+            onPress={() => applyDevVerificationStatus('REJECTED')}
+          >
+            <Text style={[styles.devButtonText, styles.devButtonDangerText]}>Set Rejected</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.devButton, styles.devButtonDanger]}
             onPress={handleResetOnboarding}
           >
             <Text style={[styles.devButtonText, styles.devButtonDangerText]}>
@@ -1138,25 +1177,11 @@ export default function FarmerOnboardingScreen() {
 // Styles — mapped directly to tokens from design.md
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
-  loadingScreen: {
-    flex: 1,
-    backgroundColor: tokens.colorBgMain,
-  },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: tokens.colorBgMain,
-  },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: tokens.colorBorderGray,
   },
   scrollContent: {
     padding: 16,

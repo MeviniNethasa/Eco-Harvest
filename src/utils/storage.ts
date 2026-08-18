@@ -25,6 +25,7 @@ import {
   PaymentDetails,
   ProductReview,
   UnavailableListItem,
+  VerificationRequest,
 } from '../types';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
@@ -37,6 +38,7 @@ const CHAT_MESSAGES_STORAGE_KEY = '@ecoharvest/chat-messages';
 const CHAT_THREADS_STORAGE_KEY = '@ecoharvest/chat-threads';
 const REVIEWS_STORAGE_KEY = '@ecoharvest/product-reviews';
 const NOTIFICATIONS_STORAGE_KEY = '@ecoharvest/notifications';
+const VERIFICATION_REQUESTS_STORAGE_KEY = '@ecoharvest/verification-requests';
 
 /**
  * Simple pub/sub (same pattern as the crop listeners further down) so the
@@ -389,6 +391,254 @@ export async function hasCompletedFarmerOnboarding(): Promise<boolean> {
  */
 export async function clearFarmerProfile(): Promise<void> {
   await AsyncStorage.removeItem(FARMER_PROFILE_STORAGE_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Screen A-01: Verification Request Desk (SLSI Certificate Audit)
+// Web-only Desktop Admin Command Panel data layer. Distinct storage key from
+// `FARMER_PROFILE_STORAGE_KEY` above: that key holds the single on-device
+// farmer's own profile (Screen M-02), while this one holds the admin's
+// review *queue* of submitted applications (potentially many farmers, as a
+// real backend would see). `updateVerificationStatus` is the bridge between
+// the two — see its doc comment below.
+// ---------------------------------------------------------------------------
+
+const COMMISSION_RATE_DEFAULT = 5;
+const COMMISSION_RATE_VERIFIED = 2.5;
+
+/**
+ * Two ready-made sample applications for the Screen A-01 Developer Sandbox
+ * Toolbar (design.md Section 4): a clean, verifiable application and one
+ * with a missing SLSI certificate asset, so an admin can exercise both the
+ * Approve and Reject override paths without needing real submitted data.
+ */
+const SAMPLE_VALID_VERIFICATION_REQUEST: VerificationRequest = {
+  farmerId: 'farmer_seed_valid_001',
+  legalName: 'W.M. Sunil Perera',
+  businessRegistrationNo: 'BRN-LK-88231',
+  mobileNumber: '077 214 5590',
+  bankDetails: {
+    bankName: 'Bank of Ceylon',
+    branchCode: '012',
+    accountNumber: '0041278845',
+    accountHolderName: 'W.M. Sunil Perera',
+  },
+  farmCoordinates: { latitude: 6.9497, longitude: 80.7891, district: 'Nuwara Eliya' },
+  slsiCertificateUrl:
+    'https://images.unsplash.com/photo-1568992687947-868a62a9f521?w=900&q=80',
+  verificationStatus: 'PENDING',
+  commissionRate: COMMISSION_RATE_DEFAULT,
+  submittedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+};
+
+const SAMPLE_SUSPICIOUS_VERIFICATION_REQUEST: VerificationRequest = {
+  farmerId: 'farmer_seed_suspicious_002',
+  legalName: 'K.G. Ranjith Bandara',
+  businessRegistrationNo: 'BRN-LK-00019',
+  mobileNumber: '071 908 3312',
+  bankDetails: {
+    bankName: 'Peoples Bank',
+    branchCode: '204',
+    accountNumber: '9910034411',
+    accountHolderName: 'K.G. Ranjith Bandara',
+  },
+  farmCoordinates: { latitude: 7.2906, longitude: 80.6337, district: 'Matale' },
+  // Empty on purpose — simulates "missing SLSI credentials" (design.md
+  // Section 4) so the Left Inspection Pane can render a missing-asset state.
+  slsiCertificateUrl: '',
+  verificationStatus: 'PENDING',
+  commissionRate: COMMISSION_RATE_DEFAULT,
+  submittedAt: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+};
+
+/**
+ * Initial pending queue seeded into AsyncStorage the first time
+ * `getVerificationRequests` is ever called on a fresh install, so the
+ * Verification Request Desk never opens empty (design.md: "Seed sample
+ * pending SLSI verification requests if none exist").
+ */
+function buildInitialVerificationRequests(): VerificationRequest[] {
+  return [SAMPLE_VALID_VERIFICATION_REQUEST, SAMPLE_SUSPICIOUS_VERIFICATION_REQUEST];
+}
+
+/**
+ * Simple pub/sub (same pattern as cart/crops/orders/notifications above) so
+ * the Admin Command Panel's queue view can react immediately to an
+ * approve/reject override without a global state library.
+ */
+type VerificationRequestListener = (requests: VerificationRequest[]) => void;
+const verificationRequestListeners = new Set<VerificationRequestListener>();
+
+function notifyVerificationRequestListeners(requests: VerificationRequest[]): void {
+  verificationRequestListeners.forEach((listener) => listener(requests));
+}
+
+/**
+ * Subscribe to real-time verification-queue updates. Returns an unsubscribe
+ * function.
+ */
+export function subscribeToVerificationRequests(
+  listener: VerificationRequestListener
+): () => void {
+  verificationRequestListeners.add(listener);
+  return () => verificationRequestListeners.delete(listener);
+}
+
+/**
+ * Retrieve the full Screen A-01 verification queue, lazily seeding
+ * `buildInitialVerificationRequests()` into AsyncStorage on first-ever
+ * access. Never throws — falls back to `[]` on a storage read failure.
+ */
+export async function getVerificationRequests(): Promise<VerificationRequest[]> {
+  try {
+    const raw = await AsyncStorage.getItem(VERIFICATION_REQUESTS_STORAGE_KEY);
+    if (raw) {
+      return JSON.parse(raw) as VerificationRequest[];
+    }
+    const seeded = buildInitialVerificationRequests();
+    await AsyncStorage.setItem(VERIFICATION_REQUESTS_STORAGE_KEY, JSON.stringify(seeded));
+    return seeded;
+  } catch (error) {
+    console.error('Failed to read verification requests from storage:', error);
+    return [];
+  }
+}
+
+/**
+ * Persist the full verification queue and notify all live subscribers.
+ * Throws on failure — same convention as `saveCrops`/`saveOrders` above.
+ */
+async function saveVerificationRequests(requests: VerificationRequest[]): Promise<void> {
+  await AsyncStorage.setItem(VERIFICATION_REQUESTS_STORAGE_KEY, JSON.stringify(requests));
+  notifyVerificationRequestListeners(requests);
+}
+
+/**
+ * Retrieve a single queued application by `farmerId`, or `null` if it isn't
+ * (or is no longer) in the queue.
+ */
+export async function getVerificationRequestByFarmerId(
+  farmerId: string
+): Promise<VerificationRequest | null> {
+  const all = await getVerificationRequests();
+  return all.find((r) => r.farmerId === farmerId) ?? null;
+}
+
+/**
+ * Adds a new application to the queue, or overwrites the existing one with
+ * the same `farmerId` if it's already there. This is what the Screen A-01
+ * Developer Sandbox Toolbar's "Load Valid SLSI App" / "Load Suspicious App"
+ * buttons call before displaying a sample in the workspace — it guarantees
+ * the sample actually exists in the persisted queue, so a subsequent
+ * Approve/Reject override (`updateVerificationStatus`) always has a real
+ * record to update.
+ */
+export async function upsertVerificationRequest(
+  request: VerificationRequest
+): Promise<VerificationRequest[]> {
+  const all = await getVerificationRequests();
+  const existingIndex = all.findIndex((r) => r.farmerId === request.farmerId);
+  const updated =
+    existingIndex >= 0
+      ? all.map((r, i) => (i === existingIndex ? request : r))
+      : [request, ...all];
+  await saveVerificationRequests(updated);
+  return updated;
+}
+
+/**
+ * The Screen A-01 Sticky Admin Override Action Row's entry point (design.md
+ * Section 3, "Real-Time Data Synchronization"). Updates the matching
+ * application's `verificationStatus` and `commissionRate` in the admin
+ * queue, then — critically — checks whether `farmerId` matches the single
+ * on-device `FarmerProfile.id` (Screen M-02) and, if so, patches that
+ * profile too, so `FarmerOnboardingScreen` picks up the new badge and
+ * commission tier "immediately... upon next focus/render" without the two
+ * screens needing any other shared state.
+ *
+ * Throws if `farmerId` isn't currently in the queue — callers (e.g. the
+ * admin desk's Approve/Reject buttons) should only ever call this for a
+ * request they already loaded from `getVerificationRequests` /
+ * `upsertVerificationRequest`.
+ */
+export async function updateVerificationStatus(
+  farmerId: string,
+  status: 'VERIFIED' | 'REJECTED',
+  commissionRate: number
+): Promise<VerificationRequest[]> {
+  const all = await getVerificationRequests();
+  const index = all.findIndex((r) => r.farmerId === farmerId);
+  if (index === -1) {
+    throw new Error(
+      `updateVerificationStatus: no verification request found for farmerId "${farmerId}".`
+    );
+  }
+
+  const updatedRequests = all.map((r, i) =>
+    i === index ? { ...r, verificationStatus: status, commissionRate } : r
+  );
+  await saveVerificationRequests(updatedRequests);
+
+  // Farmer Portal Sync: mirror the decision onto the on-device profile if
+  // it belongs to the same farmer.
+  const farmerProfile = await getFarmerProfile();
+  if (farmerProfile && farmerProfile.id === farmerId) {
+    await saveFarmerProfile({
+      ...farmerProfile,
+      verificationStatus: status,
+      isSLSIVerified: status === 'VERIFIED',
+      commissionRate,
+    });
+  }
+
+  return updatedRequests;
+}
+
+/**
+ * Convenience wrapper around `updateVerificationStatus` for the green
+ * "Approve Verification (Set 2-3% Commission)" button — always resolves to
+ * `VERIFIED` at the 2.5% commission tier (design.md Section 3).
+ */
+export async function approveVerificationRequest(
+  farmerId: string
+): Promise<VerificationRequest[]> {
+  return updateVerificationStatus(farmerId, 'VERIFIED', COMMISSION_RATE_VERIFIED);
+}
+
+/**
+ * Convenience wrapper around `updateVerificationStatus` for the crimson
+ * "Reject Application (Set 5% Commission / Default)" button — always
+ * resolves to `REJECTED` at the default 5% commission tier.
+ */
+export async function rejectVerificationRequest(
+  farmerId: string
+): Promise<VerificationRequest[]> {
+  return updateVerificationStatus(farmerId, 'REJECTED', COMMISSION_RATE_DEFAULT);
+}
+
+/**
+ * Clears the persisted verification queue (Developer Sandbox reset).
+ * Re-seeding happens automatically on the next `getVerificationRequests`
+ * call.
+ */
+export async function clearVerificationRequests(): Promise<void> {
+  await AsyncStorage.removeItem(VERIFICATION_REQUESTS_STORAGE_KEY);
+  notifyVerificationRequestListeners([]);
+}
+
+/**
+ * Exposes the two Developer Sandbox sample applications so
+ * `AdminVerificationDeskScreen` doesn't need to hand-author fixture data
+ * itself.
+ */
+export function getSampleVerificationRequests(): {
+  valid: VerificationRequest;
+  suspicious: VerificationRequest;
+} {
+  return {
+    valid: { ...SAMPLE_VALID_VERIFICATION_REQUEST },
+    suspicious: { ...SAMPLE_SUSPICIOUS_VERIFICATION_REQUEST },
+  };
 }
 
 // ---------------------------------------------------------------------------
