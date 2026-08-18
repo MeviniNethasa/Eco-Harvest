@@ -10,6 +10,7 @@ import { Order, OrderStatus, OrdersStackParamList } from '../types';
 import { getOrders, getUnreadNotificationCount, subscribeToNotifications, subscribeToOrders } from '../utils/storage';
 import ReviewModal from '../components/ReviewModal';
 import NotificationModal from '../components/NotificationModal';
+import HeaderBranding from '../components/HeaderBranding';
 
 // "Active" orders are the ones a courier is still moving toward the buyer
 // for — delivered/cancelled orders have nothing left to track on Screen M-04.
@@ -245,23 +246,33 @@ export default function OrdersScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.loadingContainer} edges={['top']}>
-        <ActivityIndicator color={colors.primaryGreen} />
+      <SafeAreaView style={styles.loadingScreen} edges={['top']}>
+        <View style={styles.brandRow}>
+          <HeaderBranding />
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator color={colors.primaryGreen} />
+        </View>
       </SafeAreaView>
     );
   }
 
   if (orders.length === 0) {
     return (
-      <SafeAreaView style={styles.emptyState} edges={['top']}>
-        <View style={styles.emptyStateBellRow}>
-          <NotificationBell onPress={handleOpenNotifications} />
+      <SafeAreaView style={styles.emptyStateScreen} edges={['top']}>
+        <View style={styles.brandRow}>
+          <HeaderBranding />
         </View>
-        <Ionicons name="receipt-outline" size={48} color={colors.textMuted} />
-        <Text style={styles.emptyStateText}>No orders yet</Text>
-        <Text style={styles.emptyStateSubtext}>
-          Orders you place at checkout will show up here.
-        </Text>
+        <View style={styles.emptyState}>
+          <View style={styles.emptyStateBellRow}>
+            <NotificationBell onPress={handleOpenNotifications} />
+          </View>
+          <Ionicons name="receipt-outline" size={48} color={colors.textMuted} />
+          <Text style={styles.emptyStateText}>No orders yet</Text>
+          <Text style={styles.emptyStateSubtext}>
+            Orders you place at checkout will show up here.
+          </Text>
+        </View>
 
         <NotificationModal
           visible={notificationsVisible}
@@ -277,6 +288,13 @@ export default function OrdersScreen() {
     // bottom tab bar that already accounts for the bottom safe area, so we
     // don't want to double-pad the bottom.
     <SafeAreaView style={styles.screen} edges={['top']}>
+      {/* Brand Row — Header Branding Standardization Spec Section 3.2.
+          Sits above the existing title/bell row rather than replacing it,
+          so the "Your Orders" heading and notification badge stay intact. */}
+      <View style={styles.brandRow}>
+        <HeaderBranding />
+      </View>
+
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Your Orders</Text>
         <NotificationBell onPress={handleOpenNotifications} />
@@ -311,11 +329,26 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bgMain,
   },
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: colors.bgMain,
+  },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.bgMain,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderGray,
   },
   header: {
     height: 56,
@@ -336,6 +369,10 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 24,
     gap: 12,
+  },
+  emptyStateScreen: {
+    flex: 1,
+    backgroundColor: colors.bgMain,
   },
   emptyState: {
     flex: 1,

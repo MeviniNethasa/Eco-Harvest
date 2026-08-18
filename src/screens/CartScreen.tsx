@@ -18,6 +18,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CartItem, CartStackParamList, FarmGroup, OrderSummary } from '../types';
 import {
   getCart,
@@ -27,6 +28,7 @@ import {
   calculateOrderSummary,
   createOrder,
 } from '../utils/storage';
+import HeaderBranding from '../components/HeaderBranding';
 
 // --- Design tokens (Section 1 & 2 of design.md) -----------------------------
 
@@ -329,6 +331,11 @@ function StripeTestPaymentBox({
 
 export default function CartScreen() {
   const navigation = useNavigation<CartNavProp>();
+  // CartScreen isn't wrapped in a SafeAreaView (its stack has
+  // headerShown: false in TabNavigator.tsx), so the brand row has to
+  // account for the status bar / Dynamic Island itself, same as
+  // BulkOrdersScreen.tsx and OrdersScreen.tsx.
+  const insets = useSafeAreaInsets();
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -414,8 +421,13 @@ export default function CartScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator color={colors.primaryGreen} />
+      <View style={styles.loadingScreen}>
+        <View style={[styles.brandRow, { paddingTop: insets.top || 16 }]}>
+          <HeaderBranding />
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator color={colors.primaryGreen} />
+        </View>
       </View>
     );
   }
@@ -425,6 +437,15 @@ export default function CartScreen() {
       style={styles.screen}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      {/* Brand Row — Header Branding Standardization Spec Section 3.2.
+          Sits above the existing back/title header rather than replacing
+          it, matching the pattern used on Orders/Bulk/Marketplace. Uses
+          useSafeAreaInsets directly (no SafeAreaView wrapper here) so it
+          clears the status bar / Dynamic Island on every device. */}
+      <View style={[styles.brandRow, { paddingTop: insets.top || 16 }]}>
+        <HeaderBranding />
+      </View>
+
       <View style={styles.header}>
         <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
           <Ionicons name="chevron-back" size={24} color={colors.textDark} />
@@ -497,11 +518,24 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bgMain,
   },
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: colors.bgMain,
+  },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.bgMain,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderGray,
   },
   header: {
     height: 56,

@@ -42,6 +42,7 @@ import {
   subscribeToNotifications,
 } from '../utils/storage';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
+import HeaderBranding from '../components/HeaderBranding';
 
 // ---------------------------------------------------------------------------
 // Design tokens (from design.md — Screen M-02 spec)
@@ -689,8 +690,13 @@ export default function FarmerOnboardingScreen() {
   // ---------------------------------------------------------------------
   if (isLoadingProfile) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator color={tokens.colorPrimaryGreen} size="large" />
+      <View style={styles.loadingScreen}>
+        <View style={styles.brandRow}>
+          <HeaderBranding />
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator color={tokens.colorPrimaryGreen} size="large" />
+        </View>
       </View>
     );
   }
@@ -702,6 +708,15 @@ export default function FarmerOnboardingScreen() {
       style={{ flex: 1, backgroundColor: tokens.colorBgMain }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      {/* Brand Row — Header Branding Standardization Spec Section 3.2.
+          Rendered as this screen's own top header container, above the
+          scroll content. The ProfileStack's native header (back button +
+          "Farmer Portal" title, see TabNavigator.tsx) is untouched, so
+          back navigation keeps working exactly as before. */}
+      <View style={styles.brandRow}>
+        <HeaderBranding />
+      </View>
+
       <ScrollView
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 140 }]}
         keyboardShouldPersistTaps="handled"
@@ -1123,11 +1138,25 @@ export default function FarmerOnboardingScreen() {
 // Styles — mapped directly to tokens from design.md
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: tokens.colorBgMain,
+  },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: tokens.colorBgMain,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.colorBorderGray,
   },
   scrollContent: {
     padding: 16,

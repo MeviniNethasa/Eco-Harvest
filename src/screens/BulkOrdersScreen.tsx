@@ -29,11 +29,13 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BulkMatchResult, ExtractedListItem, RootTabParamList } from '../types';
 import {
   addBulkMatchItemsToCart,
   matchHandwrittenListToVerifiedFarmers,
 } from '../utils/storage';
+import HeaderBranding from '../components/HeaderBranding';
 
 type BulkNavProp = BottomTabNavigationProp<RootTabParamList, 'Bulk'>;
 
@@ -57,6 +59,10 @@ function formatLKR(value: number): string {
 
 export default function BulkOrdersScreen() {
   const navigation = useNavigation<BulkNavProp>();
+  // Screen isn't wrapped in a SafeAreaView (it's a direct bottom-tab screen
+  // rendered with headerShown: false in TabNavigator.tsx), so the brand row
+  // has to account for the status bar / Dynamic Island itself.
+  const insets = useSafeAreaInsets();
 
   // --- Subscription guard ---
   // This workspace is gated to subscribed customers. There's no real
@@ -216,6 +222,14 @@ export default function BulkOrdersScreen() {
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      {/* Brand Row — Header Branding Standardization Spec Section 3.2.
+          Sits above the existing title/badge row rather than replacing it,
+          so the "AI Bulk Orders Engine" heading and workspace badge stay
+          intact. */}
+      <View style={[styles.brandRow, { paddingTop: insets.top || 16 }]}>
+        <HeaderBranding />
+      </View>
+
       <View style={styles.header}>
         <Text style={styles.headerTitle}>AI Bulk Orders Engine</Text>
         <View style={styles.workspaceBadge}>
@@ -444,6 +458,16 @@ export default function BulkOrdersScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: '#FAFAFA' },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
   header: {
     height: 56,
     flexDirection: 'row',
