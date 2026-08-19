@@ -33,7 +33,9 @@
         {
           "photosPermission": "The app needs access to your photo library to upload crop photos and SLSI organic certificates."
         }
-      ]
+      ],
+      "react-native-fast-tflite",
+      "expo-asset"
     ]
   }
 }

@@ -2,12 +2,17 @@
 //
 // Screen M-05: AI Bulk Orders Engine (Subscribed Customer Workspace).
 //
-// Workflow: a subscribed customer uploads a photo of a handwritten crop
-// requirement list -> the app simulates OCR/vision parsing into an editable
-// item list -> each item is matched, client-side, against SLSI-Verified
-// farmers only (matchHandwrittenListToVerifiedFarmers in storage.ts) ->
-// the customer reviews available vs. unavailable items and proceeds
-// straight to checkout.
+// Workflow: a subscribed customer uploads (or photographs) a handwritten crop
+// requirement list -> the image is sent to the local FastAPI/Qwen2-VL OCR
+// backend at API_BASE_URL, which transcribes it -> the returned items
+// populate an editable item list -> each item is matched, client-side,
+// against SLSI-Verified farmers only (matchHandwrittenListToVerifiedFarmers
+// in storage.ts) -> the customer reviews available vs. unavailable items and
+// proceeds straight to checkout.
+//
+// The "Developer Sandbox" presets at the bottom still use a canned/simulated
+// result so the matching + checkout flow is exercisable without a photo or a
+// running backend.
 //
 // Requires `expo-image-picker` (npx expo install expo-image-picker).
 
@@ -39,10 +44,14 @@ import HeaderBranding from '../components/HeaderBranding';
 
 type BulkNavProp = BottomTabNavigationProp<RootTabParamList, 'Bulk'>;
 
-// Simulated OCR/vision output for a real photo upload. There's no vision
-// model wired up here (per spec: client-side, no external API calls) — this
-// canned result stands in for "the AI read the handwriting" so the rest of
-// the flow (editable list -> matching -> checkout) is fully exercisable.
+// TODO: replace with your machine's LAN IP (e.g. "http://192.168.1.42:8000")
+// so a physical device / Expo Go can reach the FastAPI backend. "localhost"
+// only works from an iOS simulator running on the same machine.
+const API_BASE_URL = 'http://192.168.1.153:8000';
+
+// Canned result used only by the Developer Sandbox presets below, so the
+// matching + checkout flow is exercisable without a photo or a running
+// backend. Real photo uploads go through API_BASE_URL/extract-handwriting.
 const SIMULATED_OCR_RESULT: Array<Omit<ExtractedListItem, 'id'>> = [
   { rawText: '40kg Carrot', cropName: 'Carrot', requestedQtyKg: 40 },
   { rawText: '15kg Beetroot', cropName: 'Beetroot', requestedQtyKg: 15 },
@@ -55,6 +64,22 @@ function makeItemId(): string {
 
 function formatLKR(value: number): string {
   return `LKR ${Math.round(value).toLocaleString('en-LK')}`;
+}
+
+// Best-effort split of one transcribed line (e.g. "40kg Carrot" or
+// "Carrot 40kg") into a crop name + quantity. Falls back to putting the
+// whole line into cropName with qty 0 so the user can fix it inline.
+function parseExtractedLine(raw: string): { cropName: string; qty: number } {
+  const cleaned = raw.trim();
+  const leading = /^(\d+(?:\.\d+)?)\s*kg\.?\s+(.+)$/i.exec(cleaned);
+  if (leading) {
+    return { cropName: leading[2].trim(), qty: parseFloat(leading[1]) };
+  }
+  const trailing = /^(.+?)\s+(\d+(?:\.\d+)?)\s*kg\.?$/i.exec(cleaned);
+  if (trailing) {
+    return { cropName: trailing[1].trim(), qty: parseFloat(trailing[2]) };
+  }
+  return { cropName: cleaned, qty: 0 };
 }
 
 export default function BulkOrdersScreen() {
@@ -84,7 +109,72 @@ export default function BulkOrdersScreen() {
 
   const isPresetImage = imageUri?.startsWith('preset://') ?? false;
 
-  const pickImage = useCallback(async () => {
+  // Sends the photographed/picked image to the FastAPI backend and populates
+  // parsedItems from the returned extracted_items. Used for real photos only
+  // — Developer Sandbox presets use the simulated result instead.
+  const handleExtractHandwriting = useCallback(async (uri: string) => {
+    setIsParsing(true);
+    setMatchResult(null);
+    try {
+      // Convert the local image URI into a native binary Blob, then upload
+      // it via a standard multipart FormData over global fetch(). Fetching
+      // a "file://" URI and reading it as a Blob is handled natively by
+      // React Native's fetch polyfill on both iOS and Android, so this
+      // works consistently without any Expo file-system dependency.
+      const imageBlob = await fetch(uri).then((res) => res.blob());
+
+      const formData = new FormData();
+      formData.append('file', imageBlob, 'handwritten_list.jpg');
+
+      const response = await fetch(`${API_BASE_URL}/extract-handwriting`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server responded with status ${response.status}`);
+      }
+
+      let data: any;
+      try {
+        data = await response.json();
+      } catch (parseError) {
+        throw new Error('Server returned an unexpected (non-JSON) response.');
+      }
+
+      if (!data?.success) {
+        throw new Error(data?.detail || data?.error || 'Extraction did not succeed.');
+      }
+
+      const rawItems: string[] = Array.isArray(data.extracted_items) ? data.extracted_items : [];
+      const items: ExtractedListItem[] = rawItems.map((raw) => {
+        const { cropName, qty } = parseExtractedLine(raw);
+        return { id: makeItemId(), rawText: raw, cropName, requestedQtyKg: qty };
+      });
+
+      setParsedItems(items);
+
+      if (items.length === 0) {
+        Alert.alert(
+          'No items found',
+          "We couldn't read any items from that photo. Try a clearer photo, or add items manually below."
+        );
+      }
+    } catch (error) {
+      console.error('Failed to extract handwriting:', error);
+      Alert.alert(
+        'Could not reach the AI server',
+        `Make sure the Python backend is running and reachable at ${API_BASE_URL}, then try again.`
+      );
+    } finally {
+      setIsParsing(false);
+    }
+  }, []);
+
+  const pickFromLibrary = useCallback(async () => {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -99,27 +189,69 @@ export default function BulkOrdersScreen() {
         quality: 0.7,
       });
       if (!result.canceled && result.assets?.[0]?.uri) {
-        setImageUri(result.assets[0].uri);
+        const uri = result.assets[0].uri;
+        setImageUri(uri);
         setParsedItems([]);
         setMatchResult(null);
+        handleExtractHandwriting(uri);
       }
     } catch (error) {
       console.error('Failed to open image picker:', error);
       Alert.alert('Something went wrong', 'Could not open the photo library.');
     }
-  }, []);
+  }, [handleExtractHandwriting]);
 
+  const pickFromCamera = useCallback(async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          'Permission needed',
+          'Allow camera access to take a photo of your handwritten list.'
+        );
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.7,
+      });
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        const uri = result.assets[0].uri;
+        setImageUri(uri);
+        setParsedItems([]);
+        setMatchResult(null);
+        handleExtractHandwriting(uri);
+      }
+    } catch (error) {
+      console.error('Failed to open camera:', error);
+      Alert.alert('Something went wrong', 'Could not open the camera.');
+    }
+  }, [handleExtractHandwriting]);
+
+  const handleUploadPress = useCallback(() => {
+    Alert.alert('Upload Handwritten List', 'Choose a photo source', [
+      { text: 'Take Photo', onPress: pickFromCamera },
+      { text: 'Choose from Library', onPress: pickFromLibrary },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, [pickFromCamera, pickFromLibrary]);
+
+  // Manual "Parse List" retry button: for real photos, re-runs the backend
+  // extraction; for Developer Sandbox presets, replays the simulated result
+  // (there's no real image file behind a preset:// uri to send anywhere).
   const handleParseImage = useCallback(() => {
     if (!imageUri) return;
-    setIsParsing(true);
-    setMatchResult(null);
-    // Simulated OCR/vision latency so the "Parsing handwritten text..."
-    // loading state is visible before the editable list appears.
-    setTimeout(() => {
-      setParsedItems(SIMULATED_OCR_RESULT.map((item) => ({ ...item, id: makeItemId() })));
-      setIsParsing(false);
-    }, 1400);
-  }, [imageUri]);
+    if (isPresetImage) {
+      setIsParsing(true);
+      setMatchResult(null);
+      setTimeout(() => {
+        setParsedItems(SIMULATED_OCR_RESULT.map((item) => ({ ...item, id: makeItemId() })));
+        setIsParsing(false);
+      }, 1400);
+      return;
+    }
+    handleExtractHandwriting(imageUri);
+  }, [imageUri, isPresetImage, handleExtractHandwriting]);
 
   const updateParsedItem = useCallback(
     (id: string, patch: Partial<Pick<ExtractedListItem, 'cropName' | 'requestedQtyKg'>>) => {
@@ -218,10 +350,20 @@ export default function BulkOrdersScreen() {
   const grandTotal = useMemo(() => matchResult?.grandTotal ?? 0, [matchResult]);
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={styles.flex}>
+      {/* Full-screen processing overlay while the backend transcribes a real
+          photo. Sits above everything else in the screen. */}
+      {isParsing && !isPresetImage && (
+        <View style={styles.extractOverlay} pointerEvents="auto">
+          <ActivityIndicator size="large" color="#FFFFFF" />
+          <Text style={styles.extractOverlayText}>Extracting handwritten items via AI...</Text>
+        </View>
+      )}
+
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
       {/* Brand Row — Header Branding Standardization Spec Section 3.2.
           Sits above the existing title/badge row rather than replacing it,
           so the "AI Bulk Orders Engine" heading and workspace badge stay
@@ -295,23 +437,28 @@ export default function BulkOrdersScreen() {
             )}
 
             <View style={styles.uploadRow}>
-              <Pressable style={styles.uploadButton} onPress={pickImage}>
-                <Ionicons name="cloud-upload-outline" size={16} color="#FFFFFF" />
-                <Text style={styles.uploadButtonText}>Upload Handwritten List</Text>
+              <Pressable style={styles.uploadButton} onPress={handleUploadPress} disabled={isParsing}>
+                <Text style={styles.uploadButtonText}>📷 Upload Handwritten List</Text>
               </Pressable>
               <Pressable
                 style={[styles.parseButton, !imageUri && styles.parseButtonDisabled]}
                 onPress={handleParseImage}
                 disabled={!imageUri || isParsing}
               >
-                <Text style={styles.parseButtonText}>Parse List</Text>
+                <Text style={styles.parseButtonText}>
+                  {parsedItems.length > 0 ? 'Re-scan' : 'Parse List'}
+                </Text>
               </Pressable>
             </View>
 
             {isParsing && (
               <View style={styles.parsingRow}>
                 <ActivityIndicator size="small" color="#7C3AED" />
-                <Text style={styles.parsingText}>Parsing handwritten text...</Text>
+                <Text style={styles.parsingText}>
+                  {isPresetImage
+                    ? 'Parsing handwritten text...'
+                    : 'Extracting handwritten items via AI...'}
+                </Text>
               </View>
             )}
           </View>
@@ -452,12 +599,32 @@ export default function BulkOrdersScreen() {
           </View>
         </ScrollView>
       )}
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: '#FAFAFA' },
+  extractOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 50,
+    backgroundColor: 'rgba(17, 24, 39, 0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  extractOverlayText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingHorizontal: 40,
+  },
   brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
