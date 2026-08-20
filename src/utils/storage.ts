@@ -13,6 +13,7 @@ import {
   ChatThread,
   CourierInfo,
   Crop,
+  CustomerProfile,
   DeliveryStatus,
   DeliveryTrackingData,
   ExtractedListItem,
@@ -33,6 +34,7 @@ import { MOCK_CROPS, MOCK_FARMERS } from '../data/mockData';
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
 const FARMER_PROFILE_STORAGE_KEY = '@ecoharvest/farmer-profile';
+const USER_PROFILE_KEY = '@ecoharvest/user-profile';
 const ORDERS_STORAGE_KEY = '@ecoharvest/orders';
 const TRACKING_STORAGE_KEY = '@ecoharvest/delivery-tracking';
 const SUBSCRIPTIONS_STORAGE_KEY = '@ecoharvest/bulk-subscriptions';
@@ -395,6 +397,87 @@ export async function hasCompletedFarmerOnboarding(): Promise<boolean> {
  */
 export async function clearFarmerProfile(): Promise<void> {
   await AsyncStorage.removeItem(FARMER_PROFILE_STORAGE_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Customer Profile (Profile tab first-time onboarding, persisted so it's
+// only done once — the customer-side counterpart to FarmerProfile above)
+// ---------------------------------------------------------------------------
+
+/**
+ * Simple pub/sub (same pattern as the farmer-profile-adjacent listeners in
+ * this file) so ProfileScreen can react immediately the moment a customer
+ * completes/edits registration, without a global state library.
+ */
+type UserProfileListener = (profile: CustomerProfile | null) => void;
+const userProfileListeners = new Set<UserProfileListener>();
+
+function notifyUserProfileListeners(profile: CustomerProfile | null): void {
+  userProfileListeners.forEach((listener) => listener(profile));
+}
+
+/**
+ * Subscribe to real-time customer-profile changes. Returns an unsubscribe
+ * function.
+ */
+export function subscribeToUserProfile(listener: UserProfileListener): () => void {
+  userProfileListeners.add(listener);
+  return () => userProfileListeners.delete(listener);
+}
+
+/**
+ * Generates a reasonably unique customer-profile id, same approach as
+ * `generateFarmerId` above.
+ */
+export function generateCustomerId(): string {
+  return `customer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Retrieve the persisted customer profile, or `null` if this device has
+ * never completed the Profile tab's "Register as Customer" flow. `null` is
+ * the signal ProfileScreen uses (alongside `getFarmerProfile`) to decide
+ * whether to render the first-time onboarding choice cards.
+ */
+export async function getUserProfile(): Promise<CustomerProfile | null> {
+  try {
+    const raw = await AsyncStorage.getItem(USER_PROFILE_KEY);
+    return raw ? (JSON.parse(raw) as CustomerProfile) : null;
+  } catch (error) {
+    console.error('Failed to read user profile from storage:', error);
+    return null;
+  }
+}
+
+/**
+ * Persist the customer profile (creation on first-time registration, or a
+ * future "Edit Details" update) and notify any live subscriber.
+ *
+ * Throws on failure — callers should catch this and inform the user rather
+ * than assuming success (same convention as `saveFarmerProfile`).
+ */
+export async function saveUserProfile(profile: CustomerProfile): Promise<CustomerProfile> {
+  await AsyncStorage.setItem(USER_PROFILE_KEY, JSON.stringify(profile));
+  notifyUserProfileListeners(profile);
+  return profile;
+}
+
+/**
+ * Convenience check for "has this device registered as a customer at least
+ * once?" — mirrors `hasCompletedFarmerOnboarding` above.
+ */
+export async function hasCompletedCustomerOnboarding(): Promise<boolean> {
+  const profile = await getUserProfile();
+  return profile !== null;
+}
+
+/**
+ * Clears the saved customer profile entirely (e.g. a future Developer
+ * Sandbox "Reset Onboarding" control, mirroring `clearFarmerProfile`).
+ */
+export async function clearUserProfile(): Promise<void> {
+  await AsyncStorage.removeItem(USER_PROFILE_KEY);
+  notifyUserProfileListeners(null);
 }
 
 // ---------------------------------------------------------------------------

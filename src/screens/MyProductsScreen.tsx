@@ -23,6 +23,7 @@ import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { Crop, FarmerTabParamList } from '../types';
 import { getFarmerProfile, getProductsByFarmerId, subscribeToCrops } from '../utils/storage';
+import StandardHeader from '../components/StandardHeader';
 
 type NavProp = BottomTabNavigationProp<FarmerTabParamList, 'MyProducts'>;
 
@@ -72,23 +73,28 @@ export default function MyProductsScreen() {
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator color="#15803D" />
+        <ActivityIndicator color="#15803D" size="large" />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Products</Text>
-        <Pressable
-          style={styles.addButton}
-          onPress={() => navigation.navigate('AddProduct')}
-        >
-          <Ionicons name="add" size={18} color="#FFFFFF" />
-          <Text style={styles.addButtonText}>Add Product</Text>
-        </Pressable>
-      </View>
+      <StandardHeader
+        title="My Products"
+        subtitle="Manage your active marketplace listings"
+        rightElement={
+          <Pressable
+            style={styles.addButton}
+            onPress={() => navigation.navigate('AddProduct')}
+            accessibilityRole="button"
+            accessibilityLabel="Add New Product"
+          >
+            <Ionicons name="add" size={18} color="#FFFFFF" />
+            <Text style={styles.addButtonText}>Add Product</Text>
+          </Pressable>
+        }
+      />
 
       <FlatList
         data={products}
@@ -101,11 +107,20 @@ export default function MyProductsScreen() {
         }
         ListEmptyComponent={
           <View style={styles.centered}>
-            <Ionicons name="leaf-outline" size={40} color="#9CA3AF" />
+            <View style={styles.emptyIconCircle}>
+              <Ionicons name="leaf-outline" size={36} color="#15803D" />
+            </View>
             <Text style={styles.emptyTitle}>No products yet</Text>
             <Text style={styles.emptySubtitle}>
-              Publish your first crop to see it here and on the marketplace.
+              Publish your first crop to see it here and live on the marketplace.
             </Text>
+            <Pressable
+              style={[styles.addButton, { marginTop: 14 }]}
+              onPress={() => navigation.navigate('AddProduct')}
+            >
+              <Ionicons name="add" size={18} color="#FFFFFF" />
+              <Text style={styles.addButtonText}>Publish Crop</Text>
+            </Pressable>
           </View>
         }
         renderItem={({ item }) => (
@@ -116,6 +131,9 @@ export default function MyProductsScreen() {
               <Text style={styles.productMeta}>
                 {item.category} • LKR {item.pricePerUnit.toLocaleString()} / {item.unit}
               </Text>
+              {item.availableQtyKg !== undefined && (
+                <Text style={styles.stockText}>Stock: {item.availableQtyKg} kg</Text>
+              )}
               {item.isSLSIVerified && (
                 <View style={styles.verifiedPill}>
                   <Ionicons name="shield-checkmark" size={12} color="#15803D" />
@@ -132,16 +150,7 @@ export default function MyProductsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAFA' },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 6, padding: 24 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 12,
-  },
-  headerTitle: { fontSize: 20, fontWeight: '700', color: '#111827' },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24 },
   addButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -149,26 +158,41 @@ const styles = StyleSheet.create({
     backgroundColor: '#15803D',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
   },
   addButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 13 },
-  listContent: { paddingHorizontal: 16, paddingBottom: 24, gap: 10 },
+  listContent: { padding: 16, paddingBottom: 32, gap: 12 },
   emptyListContent: { flexGrow: 1 },
-  emptyTitle: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  emptySubtitle: { fontSize: 13, color: '#6B7280', textAlign: 'center', maxWidth: 260 },
+  emptyIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  emptySubtitle: { fontSize: 13, color: '#6B7280', textAlign: 'center', maxWidth: 280, lineHeight: 18 },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 14,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 14,
+    padding: 14,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  thumbnail: { width: 56, height: 56, borderRadius: 8, backgroundColor: '#F4F4F5' },
-  productName: { fontSize: 15, fontWeight: '600', color: '#111827' },
-  productMeta: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  thumbnail: { width: 64, height: 64, borderRadius: 10, backgroundColor: '#F4F4F5' },
+  productName: { fontSize: 16, fontWeight: '600', color: '#111827' },
+  productMeta: { fontSize: 13, color: '#6B7280', marginTop: 2 },
+  stockText: { fontSize: 12, color: '#15803D', fontWeight: '500', marginTop: 2 },
   verifiedPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -176,7 +200,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     backgroundColor: '#F0FDF4',
     borderRadius: 6,
-    paddingHorizontal: 6,
+    paddingHorizontal: 8,
     paddingVertical: 2,
     marginTop: 6,
   },

@@ -39,6 +39,7 @@ import {
   markNotificationAsRead,
   publishCrop,
   saveFarmerProfile,
+  setActiveMode,
   subscribeToNotifications,
   syncFarmerProfileToVerificationQueue,
 } from '../utils/storage';
@@ -550,6 +551,18 @@ export default function FarmerOnboardingScreen() {
       setProfile(saved);
       setIsEditingProfile(false);
 
+      // Automatically transition the user into Farmer Mode on every
+      // successful save — first-time completion (Profile tab's "Register
+      // as Farmer" entry point) or a later "Edit Profile Details" — so the
+      // dynamic bottom tab bar immediately shows the 5 Farmer tabs (My
+      // Products, Add Product, Orders, Messages, Profile) without the user
+      // needing a separate manual "Switch to Farmer Mode" tap.
+      try {
+        await setActiveMode('farmer');
+      } catch (err) {
+        console.error('Failed to switch into Farmer Mode after saving profile:', err);
+      }
+
       Alert.alert(
         wasFirstTime ? 'Onboarding Complete' : 'Profile Updated',
         wasFirstTime
@@ -1021,210 +1034,6 @@ export default function FarmerOnboardingScreen() {
                 onPress={handleEditProfile}
               >
                 <Text style={styles.secondaryButtonText}>Edit Profile Details</Text>
-              </Pressable>
-            </View>
-
-            {/* ---------------- System Alerts & Notifications ---------------- */}
-            <View style={styles.card}>
-              <View style={styles.notificationHeaderRow}>
-                <View>
-                  <Text style={styles.sectionHeading}>System Alerts & Notifications</Text>
-                  <Text style={styles.notificationSubheading}>
-                    {farmerNotifications.filter((n) => !n.isRead).length} unread
-                  </Text>
-                </View>
-                <Pressable onPress={handleMarkAllFarmerNotificationsRead} hitSlop={8}>
-                  <Text style={styles.notificationMarkAllText}>Mark All as Read</Text>
-                </Pressable>
-              </View>
-
-              {isLoadingNotifications ? (
-                <ActivityIndicator color={tokens.colorPrimaryGreen} />
-              ) : farmerNotifications.length === 0 ? (
-                <Text style={styles.helperText}>No alerts yet.</Text>
-              ) : (
-                farmerNotifications
-                  .slice()
-                  .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-                  .map((notification) => (
-                    <Pressable
-                      key={notification.id}
-                      style={[
-                        styles.notificationCard,
-                        notification.isRead
-                          ? styles.notificationCardRead
-                          : styles.notificationCardUnread,
-                      ]}
-                      onPress={() => handleNotificationPress(notification)}
-                    >
-                      {!notification.isRead && <View style={styles.notificationUnreadDot} />}
-                      <Text style={styles.notificationTitle} numberOfLines={1}>
-                        {notification.title}
-                      </Text>
-                      <Text style={styles.notificationMessage}>{notification.message}</Text>
-                      <Text style={styles.notificationTimestamp}>
-                        {formatNotificationRelativeTime(notification.timestamp)}
-                      </Text>
-                    </Pressable>
-                  ))
-              )}
-
-              {/* Developer Sandbox: simulate incoming farmer alerts directly
-                  on the dashboard, per FARMER_NOTIFICATIONS_PORTAL.md. */}
-              <View style={styles.notificationSandbox}>
-                <Text style={styles.notificationSandboxLabel}>DEV SANDBOX — FARMER ALERTS</Text>
-                <View style={styles.notificationSandboxRow}>
-                  <Pressable style={styles.notificationSandboxButton} onPress={handleSimNewOrder}>
-                    <Text style={styles.notificationSandboxButtonText}>Sim: New Order</Text>
-                  </Pressable>
-                  <Pressable style={styles.notificationSandboxButton} onPress={handleSimBulkMatch}>
-                    <Text style={styles.notificationSandboxButtonText}>Sim: Bulk Match</Text>
-                  </Pressable>
-                </View>
-                <View style={styles.notificationSandboxRow}>
-                  <Pressable style={styles.notificationSandboxButton} onPress={handleSimLowStock}>
-                    <Text style={styles.notificationSandboxButtonText}>Sim: Low Stock</Text>
-                  </Pressable>
-                  <Pressable style={styles.notificationSandboxButton} onPress={handleSimNewReview}>
-                    <Text style={styles.notificationSandboxButtonText}>Sim: New Review</Text>
-                  </Pressable>
-                </View>
-              </View>
-            </View>
-
-            {/* ---------------- Customer Inquiries & Messages ---------------- */}
-            <View style={styles.card}>
-              <Text style={styles.sectionHeading}>Customer Inquiries & Messages</Text>
-
-              {isLoadingThreads ? (
-                <ActivityIndicator color={tokens.colorPrimaryGreen} />
-              ) : chatThreads.length === 0 ? (
-                <Text style={styles.helperText}>No customer messages yet.</Text>
-              ) : (
-                chatThreads.map(({ thread, lastMessage }) => (
-                  <View key={thread.id} style={styles.inquiryCard}>
-                    <View style={styles.inquiryHeaderRow}>
-                      <Text style={styles.inquiryCustomerName} numberOfLines={1}>
-                        {thread.recipientName}
-                      </Text>
-                      {lastMessage && (
-                        <Text style={styles.inquiryTimestamp}>
-                          {formatInquiryTimestamp(lastMessage.timestamp)}
-                        </Text>
-                      )}
-                    </View>
-
-                    <Text style={styles.inquiryContext} numberOfLines={1}>
-                      Order #{thread.orderId.replace(/^#/, '')} • {thread.cropSummary}
-                    </Text>
-
-                    <Text style={styles.inquiryPreview} numberOfLines={2}>
-                      {lastMessage
-                        ? lastMessage.isBlocked
-                          ? '[ Message Blocked: off-platform contact info ]'
-                          : lastMessage.text
-                        : 'No messages yet.'}
-                    </Text>
-
-                    <Pressable
-                      style={[styles.secondaryButton, styles.inquiryReplyButton]}
-                      onPress={() =>
-                        (navigation as any).navigate('Chat', {
-                          threadId: thread.id,
-                          recipientName: thread.recipientName,
-                          userRole: 'FARMER',
-                        })
-                      }
-                    >
-                      <Text style={styles.secondaryButtonText}>Reply to Customer</Text>
-                    </Pressable>
-                  </View>
-                ))
-              )}
-            </View>
-
-            {/* ---------------- Product Publisher ---------------- */}
-            <View style={styles.card}>
-              <Text style={styles.sectionHeading}>Publish New Crop to Marketplace</Text>
-
-              <Pressable style={styles.imageTrigger} onPress={handleSelectCropImage}>
-                {cropImageUri ? (
-                  <Image source={{ uri: cropImageUri }} style={styles.imagePreview} />
-                ) : (
-                  <Text style={styles.secondaryButtonText}>Select Crop Image</Text>
-                )}
-              </Pressable>
-
-              <Field label="Crop Name" error={publishErrors.cropName}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., Organic Carrot"
-                  placeholderTextColor={tokens.colorTextMuted}
-                  value={cropName}
-                  onChangeText={setCropName}
-                />
-              </Field>
-
-              <Field label="Baseline Unit Price" error={publishErrors.pricePerUnit}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Price in LKR per 1kg"
-                  placeholderTextColor={tokens.colorTextMuted}
-                  keyboardType="numeric"
-                  value={pricePerUnit}
-                  onChangeText={setPricePerUnit}
-                />
-              </Field>
-
-              <Field label="Category" error={publishErrors.category}>
-                <View style={styles.chipRow}>
-                  {CATEGORIES.map((cat) => {
-                    const selected = category === cat;
-                    return (
-                      <Pressable
-                        key={cat}
-                        style={[styles.chip, selected && styles.chipSelected]}
-                        onPress={() => setCategory(cat)}
-                      >
-                        <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                          {cat}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </Field>
-
-              <Field label="Available Stock (kg)" error={publishErrors.availableQtyKg}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 150"
-                  placeholderTextColor={tokens.colorTextMuted}
-                  keyboardType="numeric"
-                  value={availableQtyKg}
-                  onChangeText={setAvailableQtyKg}
-                />
-              </Field>
-
-              <Field label="Low-Stock Alert Threshold" error={publishErrors.lowStockThreshold}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Minimum stock threshold (e.g., 10kg)"
-                  placeholderTextColor={tokens.colorTextMuted}
-                  keyboardType="numeric"
-                  value={lowStockThreshold}
-                  onChangeText={setLowStockThreshold}
-                />
-              </Field>
-
-              <Pressable
-                style={[styles.primaryButton, isPublishing && { opacity: 0.6 }]}
-                onPress={handlePublish}
-                disabled={isPublishing}
-              >
-                <Text style={styles.primaryButtonText}>
-                  {isPublishing ? 'Publishing…' : 'Publish Crop Listing'}
-                </Text>
               </Pressable>
             </View>
           </>

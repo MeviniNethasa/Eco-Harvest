@@ -112,6 +112,36 @@ export interface FarmerProfile {
   description?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Profile Tab: First-Time Onboarding & Registration (Customer side)
+// ---------------------------------------------------------------------------
+
+/**
+ * The two subscription tiers offered during "Register as Customer"
+ * onboarding on the Profile tab. `STANDARD` is the default retail
+ * experience; `BULK_ACCESS` additionally unlocks Screen M-05's AI Bulk
+ * Orders workspace (BulkOrdersScreen) for restaurants/retailers/processors
+ * placing recurring volume orders.
+ */
+export type SubscriptionPlan = 'STANDARD' | 'BULK_ACCESS';
+
+/**
+ * Persisted customer identity + subscription choice, collected once during
+ * the Profile tab's first-time "Register as Customer" flow (see
+ * `getUserProfile` / `saveUserProfile` in storage.ts) and reused on every
+ * subsequent visit instead of re-asking for the same details every time —
+ * same pattern as `FarmerProfile` on the farmer side.
+ */
+export interface CustomerProfile {
+  id: string;
+  fullName: string;
+  phoneNumber: string;
+  city: string;
+  district: string;
+  subscriptionPlan: SubscriptionPlan;
+  createdAt: string; // ISO timestamp
+}
+
 export interface CartItem {
   cropId: string;
   name: string;

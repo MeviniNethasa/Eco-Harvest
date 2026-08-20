@@ -22,6 +22,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { CropCategory, FarmerProfile, FarmerTabParamList } from '../types';
 import { getFarmerProfile, publishCrop } from '../utils/storage';
+import StandardHeader from '../components/StandardHeader';
 
 type NavProp = BottomTabNavigationProp<FarmerTabParamList, 'AddProduct'>;
 
@@ -73,7 +74,7 @@ export default function AddProductScreen() {
         category: form.category,
         pricePerUnit: price,
         unit: form.unit.trim(),
-        imageUrl: form.imageUrl.trim() || 'https://placehold.co/400x400?text=Crop',
+        imageUrl: form.imageUrl.trim() || 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=400&q=60',
         farmName: profile.farmName,
         province: profile.province,
         district: profile.district,
@@ -94,92 +95,103 @@ export default function AddProductScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Add Product</Text>
-        <Text style={styles.subtitle}>
-          Publish a new crop listing to {profile?.farmName ?? 'your farm'}'s storefront.
-        </Text>
+    <View style={styles.container}>
+      <StandardHeader
+        title="Add Product"
+        subtitle={`Publish a new crop to ${profile?.farmName ?? 'your farm'}'s catalog`}
+      />
 
-        <Field label="Product name">
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. Organic Carrots"
-            value={form.name}
-            onChangeText={(v) => updateField('name', v)}
-          />
-        </Field>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <View style={styles.formCard}>
+            <Field label="Product Name">
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Organic Carrots"
+                placeholderTextColor="#9CA3AF"
+                value={form.name}
+                onChangeText={(v) => updateField('name', v)}
+              />
+            </Field>
 
-        <Field label="Category">
-          <View style={styles.chipRow}>
-            {CATEGORIES.map((cat) => (
-              <Pressable
-                key={cat}
-                style={[styles.chip, form.category === cat && styles.chipActive]}
-                onPress={() => setForm((prev) => ({ ...prev, category: cat }))}
-              >
-                <Text style={[styles.chipText, form.category === cat && styles.chipTextActive]}>
-                  {cat}
-                </Text>
-              </Pressable>
-            ))}
+            <Field label="Category">
+              <View style={styles.chipRow}>
+                {CATEGORIES.map((cat) => (
+                  <Pressable
+                    key={cat}
+                    style={[styles.chip, form.category === cat && styles.chipActive]}
+                    onPress={() => setForm((prev) => ({ ...prev, category: cat }))}
+                  >
+                    <Text style={[styles.chipText, form.category === cat && styles.chipTextActive]}>
+                      {cat}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </Field>
+
+            <View style={styles.row}>
+              <Field label="Price (LKR)" style={{ flex: 1 }}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="250"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="numeric"
+                  value={form.pricePerUnit}
+                  onChangeText={(v) => updateField('pricePerUnit', v)}
+                />
+              </Field>
+              <Field label="Unit" style={{ flex: 1 }}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="1kg"
+                  placeholderTextColor="#9CA3AF"
+                  value={form.unit}
+                  onChangeText={(v) => updateField('unit', v)}
+                />
+              </Field>
+            </View>
+
+            <Field label="Available Bulk Stock (kg, optional)">
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. 500"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="numeric"
+                value={form.availableQtyKg}
+                onChangeText={(v) => updateField('availableQtyKg', v)}
+              />
+            </Field>
+
+            <Field label="Image URL (optional)">
+              <TextInput
+                style={styles.input}
+                placeholder="https://..."
+                placeholderTextColor="#9CA3AF"
+                autoCapitalize="none"
+                value={form.imageUrl}
+                onChangeText={(v) => updateField('imageUrl', v)}
+              />
+            </Field>
+
+            <Pressable
+              style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
+              onPress={handlePublish}
+              disabled={submitting}
+              accessibilityRole="button"
+              accessibilityLabel="Publish Crop Listing"
+            >
+              <Text style={styles.submitButtonText}>
+                {submitting ? 'Publishing…' : 'Publish Listing'}
+              </Text>
+            </Pressable>
           </View>
-        </Field>
-
-        <View style={styles.row}>
-          <Field label="Price (LKR)" style={{ flex: 1 }}>
-            <TextInput
-              style={styles.input}
-              placeholder="250"
-              keyboardType="numeric"
-              value={form.pricePerUnit}
-              onChangeText={(v) => updateField('pricePerUnit', v)}
-            />
-          </Field>
-          <Field label="Unit" style={{ flex: 1 }}>
-            <TextInput
-              style={styles.input}
-              placeholder="1kg"
-              value={form.unit}
-              onChangeText={(v) => updateField('unit', v)}
-            />
-          </Field>
-        </View>
-
-        <Field label="Available bulk stock (kg, optional)">
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. 500"
-            keyboardType="numeric"
-            value={form.availableQtyKg}
-            onChangeText={(v) => updateField('availableQtyKg', v)}
-          />
-        </Field>
-
-        <Field label="Image URL (optional)">
-          <TextInput
-            style={styles.input}
-            placeholder="https://..."
-            autoCapitalize="none"
-            value={form.imageUrl}
-            onChangeText={(v) => updateField('imageUrl', v)}
-          />
-        </Field>
-
-        <Pressable
-          style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
-          onPress={handlePublish}
-          disabled={submitting}
-        >
-          <Text style={styles.submitButtonText}>
-            {submitting ? 'Publishing…' : 'Publish Listing'}
-          </Text>
-        </Pressable>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -202,20 +214,31 @@ function Field({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAFA' },
-  content: { padding: 16, paddingBottom: 40, gap: 16 },
-  title: { fontSize: 20, fontWeight: '700', color: '#111827' },
-  subtitle: { fontSize: 13, color: '#6B7280', marginTop: -8, marginBottom: 4 },
+  content: { padding: 16, paddingBottom: 40 },
+  formCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 18,
+    gap: 16,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
   row: { flexDirection: 'row', gap: 12 },
   field: { gap: 6 },
   fieldLabel: { fontSize: 13, fontWeight: '600', color: '#374151' },
   input: {
+    minHeight: 44,
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 10,
     fontSize: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#FAFAFA',
     color: '#111827',
   },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
@@ -223,19 +246,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    backgroundColor: '#FAFAFA',
   },
   chipActive: { backgroundColor: '#15803D', borderColor: '#15803D' },
   chipText: { fontSize: 13, color: '#374151', fontWeight: '500' },
-  chipTextActive: { color: '#FFFFFF' },
+  chipTextActive: { color: '#FFFFFF', fontWeight: '600' },
   submitButton: {
     backgroundColor: '#15803D',
     borderRadius: 10,
     paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 8,
   },
   submitButtonDisabled: { opacity: 0.6 },
   submitButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },

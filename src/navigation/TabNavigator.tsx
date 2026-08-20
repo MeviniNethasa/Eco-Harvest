@@ -35,6 +35,7 @@ import ChatScreen from '../screens/ChatScreen';
 import MyProductsScreen from '../screens/MyProductsScreen';
 import AddProductScreen from '../screens/AddProductScreen';
 import FarmerOrdersScreen from '../screens/FarmerOrdersScreen';
+import ProfileScreen from '../screens/ProfileScreen';
 
 // Typed against the union of both bars' route names (see
 // `CombinedTabParamList` in src/types/index.ts) so a single navigator
@@ -134,107 +135,11 @@ function OrdersStackNavigator() {
 
 // --- Profile (entry point into the Farmer Portal / Screen M-02) ---
 
-type ProfileNavProp = NativeStackNavigationProp<ProfileStackParamList, 'ProfileHome'>;
-
-// ProfileScreen backs the "Profile" tab in *both* bars (RootTabParamList's
-// Customer Mode tab and FarmerTabParamList's Farmer Mode tab — see
-// TabNavigator below), so it reads the active mode itself and renders one
-// of two views, rather than TabNavigator needing two separate profile
-// screens. This is also the single place mode switches are triggered from,
-// per the design spec's "Profile (ProfileScreen with farm details and
-// switch-role toggle)" requirement for Farmer Mode.
-function ProfileScreen() {
-  const navigation = useNavigation<ProfileNavProp>();
-  const [activeMode, setActiveModeState] = useState<AppMode>('customer');
-  const [farmerProfile, setFarmerProfile] = useState<FarmerProfile | null>(null);
-
-  const refresh = useCallback(async () => {
-    const [mode, profile] = await Promise.all([getActiveMode(), getFarmerProfile()]);
-    setActiveModeState(mode);
-    setFarmerProfile(profile);
-  }, []);
-
-  // Pick up mode changes made elsewhere (there's nowhere else today, but
-  // this keeps ProfileScreen correct if a future screen ever calls
-  // `setActiveMode` directly, e.g. a Farmer Portal dashboard shortcut).
-  useEffect(() => subscribeToActiveMode(setActiveModeState), []);
-
-  // Re-check on every focus — e.g. coming straight back from
-  // FarmerOnboardingScreen after completing onboarding, so tapping "Switch
-  // to Farmer Mode" a second time sees the freshly saved profile.
-  useFocusEffect(
-    useCallback(() => {
-      refresh();
-    }, [refresh])
-  );
-
-  const handleSwitchToFarmer = useCallback(async () => {
-    const onboarded = await hasCompletedFarmerOnboarding();
-    if (onboarded) {
-      await setActiveMode('farmer');
-    } else {
-      navigation.navigate('FarmerOnboarding');
-    }
-  }, [navigation]);
-
-  const handleSwitchToCustomer = useCallback(async () => {
-    await setActiveMode('customer');
-  }, []);
-
-  if (activeMode === 'farmer') {
-    return (
-      <View style={styles.profileContainer}>
-        <Text style={styles.placeholderText}>{farmerProfile?.farmName ?? 'Farmer Profile'}</Text>
-        {farmerProfile?.legalName && (
-          <Text style={styles.farmerModeSubtitle}>{farmerProfile.legalName}</Text>
-        )}
-
-        <Pressable
-          style={styles.farmerModeCard}
-          onPress={() => navigation.navigate('FarmerOnboarding')}
-        >
-          <View style={{ flex: 1 }}>
-            <Text style={styles.farmerModeTitle}>Edit Farm Details</Text>
-            <Text style={styles.farmerModeSubtitle}>
-              Update your SLSI certificate, bank details, and farm profile
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color="#6B7280" />
-        </Pressable>
-
-        <Pressable style={styles.farmerModeCard} onPress={handleSwitchToCustomer}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.farmerModeTitle}>Switch to Customer Mode</Text>
-            <Text style={styles.farmerModeSubtitle}>
-              Go back to browsing and buying as a customer
-            </Text>
-          </View>
-          <Ionicons name="swap-horizontal-outline" size={20} color="#6B7280" />
-        </Pressable>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.profileContainer}>
-      <Text style={styles.placeholderText}>Profile</Text>
-
-      <Pressable style={styles.farmerModeCard} onPress={handleSwitchToFarmer}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.farmerModeTitle}>Switch to Farmer Mode</Text>
-          <Text style={styles.farmerModeSubtitle}>
-            Onboard your farm and publish crops to the marketplace
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={20} color="#6B7280" />
-      </Pressable>
-    </View>
-  );
-}
+export type ProfileNavProp = NativeStackNavigationProp<ProfileStackParamList, 'ProfileHome'>;
 
 function ProfileStackNavigator() {
   return (
-    <ProfileStack.Navigator screenOptions={{ headerShown: true }}>
+    <ProfileStack.Navigator screenOptions={{ headerShown: false }}>
       <ProfileStack.Screen
         name="ProfileHome"
         component={ProfileScreen}
@@ -243,7 +148,7 @@ function ProfileStackNavigator() {
       <ProfileStack.Screen
         name="FarmerOnboarding"
         component={FarmerOnboardingScreen}
-        options={{ title: 'Farmer Portal' }}
+        options={{ title: 'Farmer Portal', headerShown: true }}
       />
     </ProfileStack.Navigator>
   );
@@ -492,40 +397,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     letterSpacing: 0.5,
-  },
-  placeholderText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  profileContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FAFAFA',
-    gap: 20,
-    paddingHorizontal: 16,
-  },
-  farmerModeCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    width: '100%',
-    backgroundColor: '#F4F4F5',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    padding: 16,
-    minHeight: 44,
-  },
-  farmerModeTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#15803D',
-    marginBottom: 2,
-  },
-  farmerModeSubtitle: {
-    fontSize: 12,
-    color: '#6B7280',
   },
   badge: {
     position: 'absolute',

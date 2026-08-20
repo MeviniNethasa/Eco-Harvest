@@ -1,14 +1,14 @@
 // src/screens/ChatScreen.tsx
 //
-// Screen M-06: Moderated In-App Chat Messenger (design.md). Renders the
-// fixed Header Bar + Transaction Summary Header (Section 3.1), the
-// scrollable alternating-bubble message thread with the moderation safety
-// banner (Section 3.2), the bottom text input bar (Section 3.3), and the
-// Developer Sandbox Toolbar (Section 3.4).
+// Screen M-06: Moderated In-App Chat Messenger & WhatsApp-Style Conversation List.
+// Supports a 2-level flow:
+// 1. WhatsApp-Style Conversations List (recent customer inquiries & active order threads)
+// 2. Individual Chat Room View (moderated chat with transaction summary header & safety banner)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -18,42 +18,33 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
+import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { ChatMessage, ChatThread } from '../types';
 import {
   generateChatThreadId,
+  getAllChatThreads,
   getChatMessages,
   getChatThread,
   sendChatMessage,
   subscribeToChatMessages,
 } from '../utils/storage';
+import StandardHeader from '../components/StandardHeader';
 
-// The chat screen can be opened from either side of a conversation: the
-// default customer-facing flow (Marketplace/Cart/Orders → "Message
-// Farmer"), or the Farmer Portal dashboard's "Reply to Customer" action
-// (FarmerOnboardingScreen, View Mode 2), which navigates in with
-// `userRole: 'FARMER'`. Whichever role is active decides bubble
-// alignment/color (Section 3.2's "Current User" vs "Counterpart") and which
-// role the input bar + sandbox presets send as. Defaults to `'CUSTOMER'` to
-// preserve the screen's original behavior when no `userRole` param is
-// passed at all.
 const DEFAULT_USER_ROLE: ChatMessage['senderRole'] = 'CUSTOMER';
 
-// ChatScreen backs both `RootTabParamList['Chat']` / `OrdersStackParamList['Chat']`
-// (`threadId`/`recipientName`/`userRole`) and `FarmerTabParamList['Messages']`
-// (`userRole`/`chatId` — see src/types/index.ts). Rather than importing both
-// param lists and unioning them against the concrete route name each caller
-// happens to use, `ChatRouteParams` stays a self-contained superset of every
-// param either route can pass; `chatId` is treated as an alias for
-// `threadId` below so a deep link into `Messages` with `chatId` behaves the
-// same as `Chat` with `threadId`.
 type ChatRouteParams = {
   threadId?: string;
   chatId?: string;
   recipientName?: string;
   userRole?: ChatMessage['senderRole'];
 };
+
+interface ThreadWithPreview {
+  thread: ChatThread;
+  lastMessage: ChatMessage | null;
+}
 
 const SANDBOX_PRESETS = [
   { label: '[ Test Normal Msg ]', text: 'When will the 100kg carrots be dispatched?' },
@@ -70,63 +61,111 @@ function formatTimestamp(iso: string): string {
   }
 }
 
+function formatRelativeDate(iso: string): string {
+  try {
+    const date = new Date(iso);
+    const now = new Date();
+    const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 3600 * 24));
+    if (diffDays === 0) return formatTimestamp(iso);
+    if (diffDays === 1) return 'Yesterday';
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  } catch {
+    return '';
+  }
+}
+
 export default function ChatScreen() {
   const navigation = useNavigation();
   const route = useRoute<RouteProp<Record<'Chat', ChatRouteParams>, 'Chat'>>();
+  const insets = useSafeAreaInsets();
 
-  // Generate a stable threadId once if the caller navigated in without one
-  // (e.g. a fresh "Message Farmer" tap) rather than re-generating on every
-  // re-render, which would orphan messages from earlier in the same visit.
-  // `chatId` (FarmerTabParamList['Messages']) is accepted as an alias for
-  // `threadId` (RootTabParamList['Chat']) so both routes resolve the same way.
-  const threadIdRef = useRef<string>(
-    route.params?.threadId ?? route.params?.chatId ?? generateChatThreadId()
-  );
-  const threadId = threadIdRef.current;
+  // Active thread ID (if navigated with a specific thread param or selected from list)
+  const initialThreadId = route.params?.threadId ?? route.params?.chatId ?? null;
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(initialThreadId);
 
+  // List view state
+  const [threads, setThreads] = useState<ThreadWithPreview[]>([]);
+  const [isLoadingList, setIsLoadingList] = useState(true);
+
+  // Room view state
   const [thread, setThread] = useState<ChatThread | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingRoom, setIsLoadingRoom] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
-  // Which side of the conversation this screen instance renders as. Seeded
-  // once from the nav param (defaulting to CUSTOMER) and from then on only
-  // changed via the Dev Sandbox "Switch Role" button, not by re-reading the
-  // route param on every render.
   const [currentUserRole, setCurrentUserRole] = useState<ChatMessage['senderRole']>(
     route.params?.userRole ?? DEFAULT_USER_ROLE
   );
 
-  const handleSwitchRole = useCallback(() => {
-    setCurrentUserRole((prev) => (prev === 'FARMER' ? 'CUSTOMER' : 'FARMER'));
-  }, []);
-
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Initial load: thread context (header/transaction summary) + message
-  // history, then live-subscribe so messages sent from the sandbox toolbar
-  // (or, in a future multi-device setup, the counterpart) appear
-  // immediately without a manual refresh.
-  useEffect(() => {
-    let isMounted = true;
+  // Load conversation threads for Level 1 List View
+  const loadThreadsList = useCallback(async () => {
+    setIsLoadingList(true);
+    try {
+      let allThreads = await getAllChatThreads();
 
-    async function load() {
-      setIsLoading(true);
+      // If empty, initialize a couple of realistic demo threads so the list is vibrant
+      if (allThreads.length === 0) {
+        const demoThread1 = await getChatThread('thread_demo_001', {
+          recipientName: 'Fresh Supermarket (Colombo)',
+        });
+        const demoThread2 = await getChatThread('thread_demo_002', {
+          recipientName: 'Green Kitchen Bistro',
+        });
+        allThreads = [demoThread1, demoThread2];
+      }
+
+      const withPreviews = await Promise.all(
+        allThreads.map(async (t): Promise<ThreadWithPreview> => {
+          const msgs = await getChatMessages(t.id);
+          const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+          return { thread: t, lastMessage: last };
+        })
+      );
+
+      withPreviews.sort((a, b) => {
+        const aTime = a.lastMessage ? new Date(a.lastMessage.timestamp).getTime() : 0;
+        const bTime = b.lastMessage ? new Date(b.lastMessage.timestamp).getTime() : 0;
+        return bTime - aTime;
+      });
+
+      setThreads(withPreviews);
+    } catch (err) {
+      console.error('Failed to load chat threads:', err);
+    } finally {
+      setIsLoadingList(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadThreadsList();
+    }, [loadThreadsList])
+  );
+
+  // When selectedThreadId changes, load the room context & messages
+  useEffect(() => {
+    if (!selectedThreadId) return;
+
+    let isMounted = true;
+    async function loadRoom() {
+      setIsLoadingRoom(true);
       const [loadedThread, loadedMessages] = await Promise.all([
-        getChatThread(threadId, { recipientName: route.params?.recipientName }),
-        getChatMessages(threadId),
+        getChatThread(selectedThreadId as string, { recipientName: route.params?.recipientName }),
+        getChatMessages(selectedThreadId as string),
       ]);
       if (isMounted) {
         setThread(loadedThread);
         setMessages(loadedMessages);
-        setIsLoading(false);
+        setIsLoadingRoom(false);
       }
     }
 
-    load();
+    loadRoom();
 
-    const unsubscribe = subscribeToChatMessages(threadId, (updated) => {
+    const unsubscribe = subscribeToChatMessages(selectedThreadId, (updated) => {
       if (isMounted) setMessages(updated);
     });
 
@@ -134,11 +173,9 @@ export default function ChatScreen() {
       isMounted = false;
       unsubscribe();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId]);
+  }, [selectedThreadId, route.params?.recipientName]);
 
   useEffect(() => {
-    // Auto-scroll to the newest message whenever the thread grows.
     const timeout = setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
     }, 50);
@@ -147,27 +184,30 @@ export default function ChatScreen() {
 
   const handleSend = useCallback(
     async (overrideText?: string) => {
+      if (!selectedThreadId) return;
       const text = (overrideText ?? draft).trim();
       if (!text || isSending) return;
 
       setIsSending(true);
       try {
-        await sendChatMessage(threadId, text, currentUserRole);
+        await sendChatMessage(selectedThreadId, text, currentUserRole);
         setDraft('');
+        loadThreadsList();
       } catch (error) {
         console.error('Failed to send chat message:', error);
       } finally {
         setIsSending(false);
       }
     },
-    [draft, isSending, threadId, currentUserRole]
+    [draft, isSending, selectedThreadId, currentUserRole, loadThreadsList]
   );
 
   const handleSandboxPreset = useCallback((presetText: string) => {
-    // "Auto-fills" per design.md Section 3.4 — loads the preset into the
-    // input bar rather than sending it immediately, so the tester can see
-    // (and optionally edit) exactly what's about to be sent.
     setDraft(presetText);
+  }, []);
+
+  const handleSwitchRole = useCallback(() => {
+    setCurrentUserRole((prev) => (prev === 'FARMER' ? 'CUSTOMER' : 'FARMER'));
   }, []);
 
   const paymentStatusStyle = useMemo(() => {
@@ -177,7 +217,101 @@ export default function ChatScreen() {
     return styles.paymentPillNeutral;
   }, [thread]);
 
-  if (isLoading || !thread) {
+  // If no thread selected, render Level 1: WhatsApp-Style Conversation List
+  if (!selectedThreadId) {
+    return (
+      <View style={styles.container}>
+        <StandardHeader
+          title="Messages"
+          subtitle="Direct customer inquiries & order communications"
+        />
+
+        {isLoadingList ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#15803D" />
+          </View>
+        ) : (
+          <FlatList
+            data={threads}
+            keyExtractor={(item) => item.thread.id}
+            contentContainerStyle={
+              threads.length === 0 ? styles.emptyListContent : styles.listContent
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconCircle}>
+                  <Ionicons name="chatbubbles-outline" size={36} color="#15803D" />
+                </View>
+                <Text style={styles.emptyTitle}>No messages yet</Text>
+                <Text style={styles.emptySubtitle}>
+                  Customer inquiries regarding your crops or orders will appear here.
+                </Text>
+              </View>
+            }
+            renderItem={({ item }) => {
+              const { thread: t, lastMessage } = item;
+              const snippet = lastMessage
+                ? lastMessage.isBlocked
+                  ? '🔒 Message blocked: off-platform contact info'
+                  : lastMessage.text
+                : 'No messages yet';
+              const timeStr = lastMessage ? formatRelativeDate(lastMessage.timestamp) : '';
+
+              return (
+                <Pressable
+                  style={styles.conversationRow}
+                  onPress={() => setSelectedThreadId(t.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Chat with ${t.recipientName}`}
+                >
+                  <View style={styles.avatarCircle}>
+                    <Text style={styles.avatarInitial}>
+                      {t.recipientName.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+
+                  <View style={styles.conversationInfo}>
+                    <View style={styles.conversationTopRow}>
+                      <Text style={styles.recipientName} numberOfLines={1}>
+                        {t.recipientName}
+                      </Text>
+                      {timeStr ? <Text style={styles.conversationTime}>{timeStr}</Text> : null}
+                    </View>
+
+                    <View style={styles.conversationContextRow}>
+                      <View style={styles.orderContextBadge}>
+                        <Text style={styles.orderContextBadgeText}>
+                          #{t.orderId.replace(/^#/, '')}
+                        </Text>
+                      </View>
+                      <Text style={styles.cropSummaryText} numberOfLines={1}>
+                        {t.cropSummary}
+                      </Text>
+                    </View>
+
+                    <Text
+                      style={[
+                        styles.lastMessageSnippet,
+                        lastMessage?.isBlocked && styles.lastMessageBlocked,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {snippet}
+                    </Text>
+                  </View>
+
+                  <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+                </Pressable>
+              );
+            }}
+          />
+        )}
+      </View>
+    );
+  }
+
+  // Level 2: Individual Chat Room View
+  if (isLoadingRoom || !thread) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#15803D" />
@@ -185,50 +319,60 @@ export default function ChatScreen() {
     );
   }
 
-  // "Chat with Customer: [Customer Name]" when replying as the farmer;
-  // otherwise just the counterpart's name, matching the screen's original
-  // customer-facing header. The thread only stores one counterpart name
-  // (`recipientName`) regardless of role, so it's reused here as the
-  // customer's display name in farmer mode.
   const headerTitle =
     currentUserRole === 'FARMER'
-      ? `Chat with Customer: ${thread.recipientName}`
+      ? `${thread.recipientName}`
       : thread.recipientName;
 
   return (
     <KeyboardAvoidingView
-      style={styles.flex}
+      style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
       <View style={styles.flex}>
-        {/* 3.1 Top Fixed Header */}
-        <View style={styles.headerBar}>
+        {/* Chat Room Header with safe area padding */}
+        <View style={[styles.chatRoomHeader, { paddingTop: Math.max(insets.top, 12) }]}>
           <Pressable
-            onPress={() => navigation.goBack()}
+            onPress={() => {
+              if (initialThreadId) {
+                navigation.goBack();
+              } else {
+                setSelectedThreadId(null);
+              }
+            }}
             style={styles.backButton}
             hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="Back to conversation list"
           >
             <Ionicons name="chevron-back" size={24} color="#111827" />
           </Pressable>
-          <View style={styles.headerNameRow}>
-            <Text style={styles.headerName} numberOfLines={1}>
+
+          <View style={styles.chatAvatarCircle}>
+            <Text style={styles.chatAvatarText}>{thread.recipientName.charAt(0).toUpperCase()}</Text>
+          </View>
+
+          <View style={styles.chatHeaderInfo}>
+            <Text style={styles.chatHeaderName} numberOfLines={1}>
               {headerTitle}
             </Text>
-            {thread.isVerified && (
-              <View style={styles.verifiedBadge}>
-                <Ionicons name="checkmark-circle" size={14} color="#16A34A" />
-                <Text style={styles.verifiedBadgeText}>SLSI Verified</Text>
-              </View>
-            )}
+            <Text style={styles.chatHeaderSubtitle} numberOfLines={1}>
+              Order #{thread.orderId.replace(/^#/, '')} • {thread.cropSummary}
+            </Text>
           </View>
-          <View style={styles.headerSpacer} />
+
+          {thread.isVerified && (
+            <View style={styles.verifiedBadge}>
+              <Ionicons name="checkmark-circle" size={14} color="#16A34A" />
+            </View>
+          )}
         </View>
 
-        {/* 3.1 Transaction Summary Header */}
+        {/* Transaction Summary Banner */}
         <View style={styles.transactionBar}>
           <View style={styles.transactionCol}>
-            <Text style={styles.transactionLabel}>Order</Text>
+            <Text style={styles.transactionLabel}>Order ID</Text>
             <Text style={styles.transactionValue} numberOfLines={1}>
               #{thread.orderId.replace(/^#/, '')}
             </Text>
@@ -246,58 +390,48 @@ export default function ChatScreen() {
           </View>
         </View>
 
-        {/* 3.2 Scrollable Message Thread */}
+        {/* Scrollable Message Thread */}
         <ScrollView
           ref={scrollViewRef}
-          style={styles.flex}
-          contentContainerStyle={styles.messageList}
-          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+          style={styles.messageScroll}
+          contentContainerStyle={styles.messageScrollContent}
+          keyboardShouldPersistTaps="handled"
         >
-          {messages.length === 0 && (
-            <Text style={styles.emptyStateText}>
-              No messages yet. Say hello — off-platform contact info will be blocked
-              automatically.
-            </Text>
-          )}
-
           {messages.map((message) => {
-            if (message.isBlocked) {
-              return (
-                <View key={message.id} style={styles.blockedCard}>
-                  <Ionicons name="shield-checkmark" size={16} color="#DC2626" />
-                  <Text style={styles.blockedCardText}>
-                    [ Message Blocked: Off-platform contact sharing violates safety
-                    guidelines ]
-                  </Text>
-                </View>
-              );
-            }
-
-            const isCurrentUser = message.senderRole === currentUserRole;
+            const isMe = message.senderRole === currentUserRole;
             return (
               <View
                 key={message.id}
                 style={[
-                  styles.bubbleRow,
-                  isCurrentUser ? styles.bubbleRowRight : styles.bubbleRowLeft,
+                  styles.bubbleWrapper,
+                  isMe ? styles.bubbleWrapperRight : styles.bubbleWrapperLeft,
                 ]}
               >
                 <View
                   style={[
                     styles.bubble,
-                    isCurrentUser ? styles.bubbleCurrentUser : styles.bubbleCounterpart,
+                    isMe ? styles.bubbleGreen : styles.bubbleGray,
+                    message.isBlocked && styles.bubbleBlocked,
                   ]}
                 >
-                  <Text
-                    style={isCurrentUser ? styles.bubbleTextLight : styles.bubbleTextDark}
-                  >
+                  <Text style={isMe ? styles.bubbleTextLight : styles.bubbleTextDark}>
                     {message.text}
                   </Text>
                 </View>
+
+                {message.isBlocked && (
+                  <View style={styles.blockedCard}>
+                    <Ionicons name="alert-circle" size={16} color="#DC2626" />
+                    <Text style={styles.blockedCardText}>
+                      Off-platform contact info blocked for transaction safety.
+                    </Text>
+                  </View>
+                )}
+
                 <Text
                   style={[
                     styles.timestamp,
-                    isCurrentUser ? styles.timestampRight : styles.timestampLeft,
+                    isMe ? styles.timestampRight : styles.timestampLeft,
                   ]}
                 >
                   {formatTimestamp(message.timestamp)}
@@ -307,33 +441,44 @@ export default function ChatScreen() {
           })}
         </ScrollView>
 
-        {/* 3.3 Bottom Text Input Bar */}
-        <View style={styles.inputBar}>
-          <Pressable style={styles.attachButton} hitSlop={8}>
-            <Ionicons name="attach" size={22} color="#6B7280" />
-          </Pressable>
+        {/* Bottom Text Input Bar */}
+        <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           <TextInput
             style={styles.textInput}
-            placeholder="Type a message..."
-            placeholderTextColor="#6B7280"
             value={draft}
             onChangeText={setDraft}
+            placeholder="Type a message…"
+            placeholderTextColor="#9CA3AF"
             multiline
+            maxLength={500}
+            returnKeyType="send"
+            onSubmitEditing={() => handleSend()}
           />
           <Pressable
             style={[styles.sendButton, (!draft.trim() || isSending) && styles.sendButtonDisabled]}
             onPress={() => handleSend()}
             disabled={!draft.trim() || isSending}
+            accessibilityRole="button"
+            accessibilityLabel="Send Message"
           >
-            <Text style={styles.sendButtonText}>Send</Text>
+            {isSending ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Ionicons name="send" size={16} color="#FFFFFF" />
+            )}
           </Pressable>
         </View>
 
-        {/* 3.4 Developer Sandbox Toolbar */}
+        {/* Developer Sandbox Toolbar */}
         <View style={styles.sandboxToolbar}>
-          <Text style={styles.sandboxLabel}>
-            Dev Sandbox — Viewing as {currentUserRole === 'FARMER' ? 'Farmer' : 'Customer'}
-          </Text>
+          <View style={styles.sandboxHeaderRow}>
+            <Text style={styles.sandboxLabel}>DEV SANDBOX ({currentUserRole} VIEW)</Text>
+            <Pressable onPress={handleSwitchRole} style={styles.switchRoleButton}>
+              <Text style={styles.switchRoleButtonText}>
+                Switch to {currentUserRole === 'FARMER' ? 'CUSTOMER' : 'FARMER'}
+              </Text>
+            </Pressable>
+          </View>
           <View style={styles.sandboxButtonRow}>
             {SANDBOX_PRESETS.map((preset) => (
               <Pressable
@@ -344,14 +489,6 @@ export default function ChatScreen() {
                 <Text style={styles.sandboxButtonText}>{preset.label}</Text>
               </Pressable>
             ))}
-            <Pressable
-              style={[styles.sandboxButton, styles.sandboxButtonRole]}
-              onPress={handleSwitchRole}
-            >
-              <Text style={[styles.sandboxButtonText, styles.sandboxButtonRoleText]}>
-                [ Switch Role: Customer / Farmer ]
-              </Text>
-            </Pressable>
           </View>
         </View>
       </View>
@@ -360,129 +497,206 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
+  container: { flex: 1, backgroundColor: '#FAFAFA' },
+  flex: { flex: 1 },
+  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FAFAFA' },
+  listContent: { paddingVertical: 8 },
+  emptyListContent: { flexGrow: 1 },
+  emptyContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 8 },
+  emptyIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#DCFCE7',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FAFAFA',
+    marginBottom: 4,
   },
-
-  // --- Header Bar (3.1) ---
-  headerBar: {
-    height: 56,
+  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  emptySubtitle: { fontSize: 13, color: '#6B7280', textAlign: 'center', maxWidth: 280, lineHeight: 18 },
+  conversationRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    backgroundColor: '#FAFAFA',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    backgroundColor: '#FFFFFF',
+  },
+  avatarCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  avatarInitial: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  conversationInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  conversationTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 3,
+  },
+  recipientName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+    flex: 1,
+    marginRight: 6,
+  },
+  conversationTime: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    fontWeight: '500',
+  },
+  conversationContextRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  orderContextBadge: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  orderContextBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  cropSummaryText: {
+    fontSize: 12,
+    color: '#6B7280',
+    flex: 1,
+  },
+  lastMessageSnippet: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+  },
+  lastMessageBlocked: {
+    color: '#DC2626',
+    fontWeight: '500',
+  },
+
+  // Chat Room styles
+  chatRoomHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
   },
   backButton: {
-    width: 32,
-    height: 32,
+    marginRight: 8,
+    padding: 2,
+  },
+  chatAvatarCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#DCFCE7',
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 10,
   },
-  headerNameRow: {
+  chatAvatarText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  chatHeaderInfo: {
     flex: 1,
-    marginLeft: 4,
   },
-  headerName: {
-    fontSize: 18,
-    fontWeight: '600',
-    lineHeight: 24,
+  chatHeaderName: {
+    fontSize: 16,
+    fontWeight: '700',
     color: '#111827',
   },
-  headerSpacer: {
-    width: 32,
+  chatHeaderSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 1,
   },
   verifiedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 2,
+    marginLeft: 6,
   },
-  verifiedBadgeText: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: '#16A34A',
-    fontWeight: '500',
-  },
-
-  // --- Transaction Summary Header (3.1) ---
   transactionBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: '#F4F4F5',
+    backgroundColor: '#F8FAFC',
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: '#E2E8F0',
   },
   transactionCol: {
-    maxWidth: 90,
+    gap: 2,
   },
   transactionColGrow: {
     flex: 1,
-    maxWidth: undefined,
   },
   transactionLabel: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: '#6B7280',
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    textTransform: 'uppercase',
   },
   transactionValue: {
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
-    color: '#111827',
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0F172A',
   },
   paymentPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
   paymentPillLocked: {
-    backgroundColor: '#DCFCE7',
+    backgroundColor: '#FEF3C7',
   },
   paymentPillPending: {
-    backgroundColor: '#FEF9C3',
+    backgroundColor: '#FEE2E2',
   },
   paymentPillNeutral: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#F1F5F9',
   },
   paymentPillText: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-    color: '#111827',
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
   },
-
-  // --- Message Thread (3.2) ---
-  messageList: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 10,
+  messageScroll: {
+    flex: 1,
   },
-  emptyStateText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#6B7280',
-    textAlign: 'center',
-    marginTop: 24,
+  messageScrollContent: {
+    padding: 16,
+    gap: 12,
   },
-  bubbleRow: {
+  bubbleWrapper: {
     maxWidth: '80%',
+    gap: 4,
   },
-  bubbleRowLeft: {
+  bubbleWrapperLeft: {
     alignSelf: 'flex-start',
     alignItems: 'flex-start',
   },
-  bubbleRowRight: {
+  bubbleWrapperRight: {
     alignSelf: 'flex-end',
     alignItems: 'flex-end',
   },
@@ -491,13 +705,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  bubbleCurrentUser: {
+  bubbleGreen: {
     backgroundColor: '#15803D',
     borderBottomRightRadius: 4,
   },
-  bubbleCounterpart: {
-    backgroundColor: '#F4F4F5',
+  bubbleGray: {
+    backgroundColor: '#E5E7EB',
     borderBottomLeftRadius: 4,
+  },
+  bubbleBlocked: {
+    opacity: 0.8,
   },
   bubbleTextLight: {
     fontSize: 14,
@@ -510,10 +727,8 @@ const styles = StyleSheet.create({
     color: '#111827',
   },
   timestamp: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: '#6B7280',
-    marginTop: 2,
+    fontSize: 11,
+    color: '#9CA3AF',
   },
   timestampLeft: {
     marginLeft: 4,
@@ -521,116 +736,98 @@ const styles = StyleSheet.create({
   timestampRight: {
     marginRight: 4,
   },
-
-  // --- Blocked Safety Banner (3.2) ---
   blockedCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    alignSelf: 'stretch',
-    borderWidth: 1,
-    borderColor: '#DC2626',
+    gap: 6,
     backgroundColor: '#FEF2F2',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    padding: 8,
   },
   blockedCardText: {
-    flex: 1,
     fontSize: 12,
-    lineHeight: 16,
     color: '#DC2626',
-    fontWeight: '500',
+    flex: 1,
   },
-
-  // --- Bottom Text Input Bar (3.3) ---
   inputBar: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     gap: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#FAFAFA',
+    paddingTop: 8,
+    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
   },
-  attachButton: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   textInput: {
     flex: 1,
+    minHeight: 40,
     maxHeight: 100,
-    minHeight: 36,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 18,
+    backgroundColor: '#F4F4F5',
+    borderRadius: 20,
     paddingHorizontal: 14,
     paddingVertical: 8,
     fontSize: 14,
-    lineHeight: 20,
     color: '#111827',
-    backgroundColor: '#FFFFFF',
   },
   sendButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: '#15803D',
-    borderRadius: 18,
-    paddingHorizontal: 16,
-    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sendButtonDisabled: {
-    backgroundColor: '#A7C7B4',
+    backgroundColor: '#9CA3AF',
   },
-  sendButtonText: {
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-
-  // --- Developer Sandbox Toolbar (3.4) ---
   sandboxToolbar: {
     paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 12,
-    backgroundColor: '#F4F4F5',
+    paddingVertical: 8,
+    backgroundColor: '#F8FAFC',
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: '#E2E8F0',
+  },
+  sandboxHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
   },
   sandboxLabel: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: '#6B7280',
-    marginBottom: 6,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  switchRoleButton: {
+    backgroundColor: '#0F172A',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  switchRoleButtonText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   sandboxButtonRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
   },
   sandboxButton: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
     backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   sandboxButtonText: {
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 11,
     fontWeight: '600',
     color: '#15803D',
-  },
-  sandboxButtonRole: {
-    borderColor: '#111827',
-    backgroundColor: '#111827',
-  },
-  sandboxButtonRoleText: {
-    color: '#FFFFFF',
   },
 });

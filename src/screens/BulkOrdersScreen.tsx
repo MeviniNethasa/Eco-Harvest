@@ -10,13 +10,11 @@
 // in storage.ts) -> the customer reviews available vs. unavailable items and
 // proceeds straight to checkout.
 //
-// The "Developer Sandbox" presets at the bottom still use a canned/simulated
-// result so the matching + checkout flow is exercisable without a photo or a
-// running backend.
-//
-// Requires `expo-image-picker` (npx expo install expo-image-picker).
+// Gated to customers with `subscriptionPlan === 'BULK_ACCESS'`. Unsubscribed
+// customers are presented with a feature paywall and an "Upgrade to Bulk Access"
+// Stripe checkout flow.
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -32,26 +30,25 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BulkMatchResult, ExtractedListItem, RootTabParamList } from '../types';
+import { BulkMatchResult, CustomerProfile, ExtractedListItem, RootTabParamList } from '../types';
 import {
   addBulkMatchItemsToCart,
+  generateCustomerId,
+  getUserProfile,
   matchHandwrittenListToVerifiedFarmers,
+  saveUserProfile,
+  subscribeToUserProfile,
 } from '../utils/storage';
 import HeaderBranding from '../components/HeaderBranding';
+import StripeCheckoutModal from '../components/StripeCheckoutModal';
 
 type BulkNavProp = BottomTabNavigationProp<RootTabParamList, 'Bulk'>;
 
-// TODO: replace with your machine's LAN IP (e.g. "http://192.168.1.42:8000")
-// so a physical device / Expo Go can reach the FastAPI backend. "localhost"
-// only works from an iOS simulator running on the same machine.
 const API_BASE_URL = 'http://192.168.1.153:8000';
 
-// Canned result used only by the Developer Sandbox presets below, so the
-// matching + checkout flow is exercisable without a photo or a running
-// backend. Real photo uploads go through API_BASE_URL/extract-handwriting.
 const SIMULATED_OCR_RESULT: Array<Omit<ExtractedListItem, 'id'>> = [
   { rawText: '40kg Carrot', cropName: 'Carrot', requestedQtyKg: 40 },
   { rawText: '15kg Beetroot', cropName: 'Beetroot', requestedQtyKg: 15 },
@@ -66,9 +63,6 @@ function formatLKR(value: number): string {
   return `LKR ${Math.round(value).toLocaleString('en-LK')}`;
 }
 
-// Best-effort split of one transcribed line (e.g. "40kg Carrot" or
-// "Carrot 40kg") into a crop name + quantity. Falls back to putting the
-// whole line into cropName with qty 0 so the user can fix it inline.
 function parseExtractedLine(raw: string): { cropName: string; qty: number } {
   const cleaned = raw.trim();
   const leading = /^(\d+(?:\.\d+)?)\s*kg\.?\s+(.+)$/i.exec(cleaned);
@@ -84,16 +78,11 @@ function parseExtractedLine(raw: string): { cropName: string; qty: number } {
 
 export default function BulkOrdersScreen() {
   const navigation = useNavigation<BulkNavProp>();
-  // Screen isn't wrapped in a SafeAreaView (it's a direct bottom-tab screen
-  // rendered with headerShown: false in TabNavigator.tsx), so the brand row
-  // has to account for the status bar / Dynamic Island itself.
   const insets = useSafeAreaInsets();
 
-  // --- Subscription guard ---
-  // This workspace is gated to subscribed customers. There's no real
-  // subscription/account system wired into this demo yet, so this defaults
-  // to "subscribed" with a toggle for testing the locked state.
-  const [isSubscribedCustomer, setIsSubscribedCustomer] = useState(true);
+  const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [isStripeModalVisible, setIsStripeModalVisible] = useState(false);
 
   // --- Upload + OCR simulation ---
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -109,66 +98,102 @@ export default function BulkOrdersScreen() {
 
   const isPresetImage = imageUri?.startsWith('preset://') ?? false;
 
-  // Sends the photographed/picked image to the FastAPI backend and populates
-  // parsedItems from the returned extracted_items. Used for real photos only
-  // — Developer Sandbox presets use the simulated result instead.
+  const loadProfile = useCallback(async () => {
+    try {
+      const p = await getUserProfile();
+      setCustomerProfile(p);
+    } catch (e) {
+      console.error('Failed to load profile for bulk orders:', e);
+    } finally {
+      setIsLoadingProfile(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadProfile();
+    }, [loadProfile])
+  );
+
+  useEffect(() => {
+    return subscribeToUserProfile((p) => {
+      setCustomerProfile(p);
+    });
+  }, []);
+
+  const isSubscribedCustomer = customerProfile?.subscriptionPlan === 'BULK_ACCESS';
+
+  const handleUpgradeSuccess = async () => {
+    try {
+      const updated: CustomerProfile = {
+        id: customerProfile?.id ?? generateCustomerId(),
+        fullName: customerProfile?.fullName ?? 'Bulk Buyer',
+        phoneNumber: customerProfile?.phoneNumber ?? '0771234567',
+        city: customerProfile?.city ?? 'Colombo',
+        district: customerProfile?.district ?? 'Colombo',
+        subscriptionPlan: 'BULK_ACCESS',
+        createdAt: customerProfile?.createdAt ?? new Date().toISOString(),
+      };
+      await saveUserProfile(updated);
+      setCustomerProfile(updated);
+      setIsStripeModalVisible(false);
+    } catch (e) {
+      console.error('Failed to save upgraded subscription:', e);
+    }
+  };
+
   const handleExtractHandwriting = useCallback(async (uri: string) => {
     setIsParsing(true);
     setMatchResult(null);
     try {
-      // Convert the local image URI into a native binary Blob, then upload
-      // it via a standard multipart FormData over global fetch(). Fetching
-      // a "file://" URI and reading it as a Blob is handled natively by
-      // React Native's fetch polyfill on both iOS and Android, so this
-      // works consistently without any Expo file-system dependency.
       const imageBlob = await fetch(uri).then((res) => res.blob());
-
       const formData = new FormData();
       formData.append('file', imageBlob, 'handwritten_list.jpg');
 
       const response = await fetch(`${API_BASE_URL}/extract-handwriting`, {
         method: 'POST',
         body: formData,
-        headers: {
-          Accept: 'application/json',
-        },
       });
 
       if (!response.ok) {
-        throw new Error(`Server responded with status ${response.status}`);
+        throw new Error(`Server responded with ${response.status}`);
       }
 
-      let data: any;
-      try {
-        data = await response.json();
-      } catch (parseError) {
-        throw new Error('Server returned an unexpected (non-JSON) response.');
+      const data = await response.json();
+      const extracted: Array<{ raw_text?: string; crop_name?: string; requested_qty_kg?: number }> =
+        data.extracted_items || [];
+
+      if (extracted.length === 0) {
+        Alert.alert('No items found', 'Could not detect any crop list items in this image.');
+        setParsedItems([]);
+        return;
       }
 
-      if (!data?.success) {
-        throw new Error(data?.detail || data?.error || 'Extraction did not succeed.');
-      }
-
-      const rawItems: string[] = Array.isArray(data.extracted_items) ? data.extracted_items : [];
-      const items: ExtractedListItem[] = rawItems.map((raw) => {
-        const { cropName, qty } = parseExtractedLine(raw);
-        return { id: makeItemId(), rawText: raw, cropName, requestedQtyKg: qty };
+      const newItems: ExtractedListItem[] = extracted.map((item) => {
+        if (item.crop_name && item.requested_qty_kg) {
+          return {
+            id: makeItemId(),
+            rawText: item.raw_text || `${item.requested_qty_kg}kg ${item.crop_name}`,
+            cropName: item.crop_name,
+            requestedQtyKg: item.requested_qty_kg,
+          };
+        }
+        const parsed = parseExtractedLine(item.raw_text || '');
+        return {
+          id: makeItemId(),
+          rawText: item.raw_text || '',
+          cropName: parsed.cropName,
+          requestedQtyKg: parsed.qty,
+        };
       });
 
-      setParsedItems(items);
-
-      if (items.length === 0) {
-        Alert.alert(
-          'No items found',
-          "We couldn't read any items from that photo. Try a clearer photo, or add items manually below."
-        );
-      }
+      setParsedItems(newItems);
     } catch (error) {
-      console.error('Failed to extract handwriting:', error);
-      Alert.alert(
-        'Could not reach the AI server',
-        `Make sure the Python backend is running and reachable at ${API_BASE_URL}, then try again.`
-      );
+      console.warn('FastAPI extraction unavailable — falling back to simulated parse:', error);
+      setTimeout(() => {
+        setParsedItems(SIMULATED_OCR_RESULT.map((item) => ({ ...item, id: makeItemId() })));
+        Alert.alert('Demo Mode Active', 'Backend unreachable. Loaded simulated handwritten crop list.');
+      }, 1000);
     } finally {
       setIsParsing(false);
     }
@@ -178,10 +203,7 @@ export default function BulkOrdersScreen() {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
-          'Permission needed',
-          'Allow photo library access to upload your handwritten list.'
-        );
+        Alert.alert('Permission needed', 'Allow photo library access to upload a list photo.');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -196,7 +218,7 @@ export default function BulkOrdersScreen() {
         handleExtractHandwriting(uri);
       }
     } catch (error) {
-      console.error('Failed to open image picker:', error);
+      console.error('Failed to open photo library:', error);
       Alert.alert('Something went wrong', 'Could not open the photo library.');
     }
   }, [handleExtractHandwriting]);
@@ -205,10 +227,7 @@ export default function BulkOrdersScreen() {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
-          'Permission needed',
-          'Allow camera access to take a photo of your handwritten list.'
-        );
+        Alert.alert('Permission needed', 'Allow camera access to take a photo of your handwritten list.');
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -236,9 +255,6 @@ export default function BulkOrdersScreen() {
     ]);
   }, [pickFromCamera, pickFromLibrary]);
 
-  // Manual "Parse List" retry button: for real photos, re-runs the backend
-  // extraction; for Developer Sandbox presets, replays the simulated result
-  // (there's no real image file behind a preset:// uri to send anywhere).
   const handleParseImage = useCallback(() => {
     if (!imageUri) return;
     if (isPresetImage) {
@@ -313,46 +329,20 @@ export default function BulkOrdersScreen() {
     }
   }, [matchResult, navigation]);
 
-  // --- Developer Sandbox presets ---
-  const applyPresetSample1 = useCallback(() => {
-    setImageUri('preset://handwritten-sample-1');
-    setParsedItems([
-      { id: makeItemId(), rawText: '50kg Carrot', cropName: 'Carrot', requestedQtyKg: 50 },
-      { id: makeItemId(), rawText: '20kg Leek', cropName: 'Leek', requestedQtyKg: 20 },
-      { id: makeItemId(), rawText: '100kg Potato', cropName: 'Potato', requestedQtyKg: 100 },
-    ]);
-    setMatchResult(null);
-  }, []);
-
-  const applyPresetSample2 = useCallback(() => {
-    setImageUri('preset://handwritten-sample-2');
-    setParsedItems([
-      {
-        id: makeItemId(),
-        rawText: '200kg Organic Beetroot',
-        cropName: 'Organic Beetroot',
-        requestedQtyKg: 200,
-      },
-      {
-        id: makeItemId(),
-        rawText: '10kg Exotic Herbs',
-        cropName: 'Exotic Herbs',
-        requestedQtyKg: 10,
-      },
-    ]);
-    setMatchResult(null);
-  }, []);
-
   const canMatch = parsedItems.some(
     (item) => item.cropName.trim().length > 0 && item.requestedQtyKg > 0
   );
 
-  const grandTotal = useMemo(() => matchResult?.grandTotal ?? 0, [matchResult]);
+  if (isLoadingProfile) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#15803D" />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.flex}>
-      {/* Full-screen processing overlay while the backend transcribes a real
-          photo. Sits above everything else in the screen. */}
       {isParsing && !isPresetImage && (
         <View style={styles.extractOverlay} pointerEvents="auto">
           <ActivityIndicator size="large" color="#FFFFFF" />
@@ -364,491 +354,617 @@ export default function BulkOrdersScreen() {
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-      {/* Brand Row — Header Branding Standardization Spec Section 3.2.
-          Sits above the existing title/badge row rather than replacing it,
-          so the "AI Bulk Orders Engine" heading and workspace badge stay
-          intact. */}
-      <View style={[styles.brandRow, { paddingTop: insets.top || 16 }]}>
-        <HeaderBranding />
-      </View>
-
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>AI Bulk Orders Engine</Text>
-        <View style={styles.workspaceBadge}>
-          <Text style={styles.workspaceBadgeText}>Subscribed Workspace</Text>
+        <View style={[styles.brandRow, { paddingTop: Math.max(insets.top, 12) }]}>
+          <HeaderBranding />
         </View>
-      </View>
 
-      {/* Subscription guard banner */}
-      <View style={[styles.subBanner, !isSubscribedCustomer && styles.subBannerLocked]}>
-        <Ionicons
-          name={isSubscribedCustomer ? 'checkmark-circle' : 'lock-closed'}
-          size={16}
-          color={isSubscribedCustomer ? '#15803D' : '#B45309'}
-        />
-        <Text style={styles.subBannerText}>
-          {isSubscribedCustomer
-            ? 'Verified subscription active — bulk workspace unlocked.'
-            : 'This workspace is for subscribed customers only.'}
-        </Text>
-        <Pressable onPress={() => setIsSubscribedCustomer((v) => !v)}>
-          <Text style={styles.subBannerToggle}>
-            {isSubscribedCustomer ? 'Simulate locked' : 'Simulate subscribed'}
-          </Text>
-        </Pressable>
-      </View>
-
-      {!isSubscribedCustomer ? (
-        <View style={styles.lockedState}>
-          <Ionicons name="lock-closed-outline" size={40} color="#6B7280" />
-          <Text style={styles.lockedTitle}>Subscribe to unlock bulk ordering</Text>
-          <Text style={styles.lockedBody}>
-            Upload a handwritten requirement list and match it against SLSI-Verified farmers
-            once your subscription is active.
-          </Text>
-        </View>
-      ) : (
-        <ScrollView
-          style={styles.flex}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Handwritten Image Upload Area */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Upload Handwritten List</Text>
-            <Text style={styles.cardSubtitle}>
-              A photo of a notebook page, e.g. "50kg Carrot, 20kg Leek, 100kg Potato".
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>AI Bulk Orders Engine</Text>
+          <View style={[styles.workspaceBadge, !isSubscribedCustomer && styles.workspaceBadgeLocked]}>
+            <Text style={[styles.workspaceBadgeText, !isSubscribedCustomer && styles.workspaceBadgeTextLocked]}>
+              {isSubscribedCustomer ? 'Subscribed Workspace' : 'Bulk Access Plan Required'}
             </Text>
-
-            {imageUri ? (
-              isPresetImage ? (
-                <View style={styles.imagePreviewPlaceholder}>
-                  <Ionicons name="document-text-outline" size={28} color="#7C3AED" />
-                  <Text style={styles.imagePreviewPlaceholderText}>Sample list loaded</Text>
-                </View>
-              ) : (
-                <Image source={{ uri: imageUri }} style={styles.imagePreview} />
-              )
-            ) : (
-              <View style={styles.imagePlaceholder}>
-                <Ionicons name="camera-outline" size={28} color="#6B7280" />
-                <Text style={styles.imagePlaceholderText}>No photo selected yet</Text>
-              </View>
-            )}
-
-            <View style={styles.uploadRow}>
-              <Pressable style={styles.uploadButton} onPress={handleUploadPress} disabled={isParsing}>
-                <Text style={styles.uploadButtonText}>📷 Upload Handwritten List</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.parseButton, !imageUri && styles.parseButtonDisabled]}
-                onPress={handleParseImage}
-                disabled={!imageUri || isParsing}
-              >
-                <Text style={styles.parseButtonText}>
-                  {parsedItems.length > 0 ? 'Re-scan' : 'Parse List'}
-                </Text>
-              </Pressable>
-            </View>
-
-            {isParsing && (
-              <View style={styles.parsingRow}>
-                <ActivityIndicator size="small" color="#7C3AED" />
-                <Text style={styles.parsingText}>
-                  {isPresetImage
-                    ? 'Parsing handwritten text...'
-                    : 'Extracting handwritten items via AI...'}
-                </Text>
-              </View>
-            )}
           </View>
+        </View>
 
-          {/* Editable parsed item list */}
-          {parsedItems.length > 0 && (
-            <View style={styles.card}>
-              <View style={styles.aiEngineBadge}>
-                <Ionicons name="sparkles" size={14} color="#FFFFFF" />
-                <Text style={styles.aiEngineBadgeText}>AI Vision Parsed List</Text>
+        {!isSubscribedCustomer ? (
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Feature Paywall Card */}
+            <View style={styles.paywallCard}>
+              <View style={styles.paywallHeaderRow}>
+                <View style={styles.paywallIconCircle}>
+                  <Ionicons name="sparkles" size={26} color="#15803D" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.paywallBadge}>PREMIUM BUYER WORKSPACE</Text>
+                  <Text style={styles.paywallTitle}>AI Bulk Orders & Farm Matching</Text>
+                </View>
               </View>
-              <Text style={styles.cardSubtitle}>
-                Review and correct any misread items before matching.
+
+              <Text style={styles.paywallSubtitle}>
+                Designed for restaurants, hotels, caterers, and processors to source volume crops
+                directly from certified organic farms.
               </Text>
 
-              {parsedItems.map((item) => (
-                <View key={item.id} style={styles.parsedRow}>
-                  <TextInput
-                    style={[styles.parsedInput, styles.parsedInputName]}
-                    value={item.cropName}
-                    onChangeText={(text) => updateParsedItem(item.id, { cropName: text })}
-                    placeholder="Crop name"
-                    placeholderTextColor="#6B7280"
-                  />
-                  <TextInput
-                    style={[styles.parsedInput, styles.parsedInputQty]}
-                    value={item.requestedQtyKg ? String(item.requestedQtyKg) : ''}
-                    onChangeText={(text) =>
-                      updateParsedItem(item.id, { requestedQtyKg: Number(text) || 0 })
-                    }
-                    placeholder="kg"
-                    placeholderTextColor="#6B7280"
-                    keyboardType="numeric"
-                  />
-                  <Pressable onPress={() => removeParsedItem(item.id)} style={styles.rowRemove}>
-                    <Ionicons name="close-circle" size={22} color="#6B7280" />
-                  </Pressable>
+              <View style={styles.benefitsList}>
+                <View style={styles.benefitRow}>
+                  <View style={styles.checkCircle}>
+                    <Ionicons name="checkmark" size={14} color="#15803D" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.benefitTitle}>AI Handwritten List OCR</Text>
+                    <Text style={styles.benefitDesc}>
+                      Photograph your whiteboard or notebook demand sheet to transcribe items instantly.
+                    </Text>
+                  </View>
                 </View>
-              ))}
 
-              <Pressable style={styles.addRowButton} onPress={addBlankRow}>
-                <Ionicons name="add" size={16} color="#15803D" />
-                <Text style={styles.addRowButtonText}>Add item</Text>
-              </Pressable>
+                <View style={styles.benefitRow}>
+                  <View style={styles.checkCircle}>
+                    <Ionicons name="checkmark" size={14} color="#15803D" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.benefitTitle}>SLSI-Verified Farm Matching</Text>
+                    <Text style={styles.benefitDesc}>
+                      Matching algorithm pairs your volume demands with verified organic farms.
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.benefitRow}>
+                  <View style={styles.checkCircle}>
+                    <Ionicons name="checkmark" size={14} color="#15803D" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.benefitTitle}>Wholesale Farm Gate Pricing</Text>
+                    <Text style={styles.benefitDesc}>
+                      Direct farmer rates with no distributor commissions or middleman markups.
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.benefitRow}>
+                  <View style={styles.checkCircle}>
+                    <Ionicons name="checkmark" size={14} color="#15803D" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.benefitTitle}>Consolidated Multi-Farm Logistics</Text>
+                    <Text style={styles.benefitDesc}>
+                      Single consolidated cart checkout with live Uber-style batch dispatch tracking.
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.pricingCard}>
+                <View>
+                  <Text style={styles.pricingAmount}>LKR 9,500</Text>
+                  <Text style={styles.pricingPeriod}>per month • cancel anytime</Text>
+                </View>
+                <View style={styles.stripeProtectedBadge}>
+                  <Ionicons name="shield-checkmark" size={13} color="#635BFF" />
+                  <Text style={styles.stripeProtectedText}>Stripe Secured</Text>
+                </View>
+              </View>
 
               <Pressable
-                style={[styles.matchButton, !canMatch && styles.matchButtonDisabled]}
-                onPress={handleMatch}
-                disabled={!canMatch || isMatching}
+                style={styles.upgradeButton}
+                onPress={() => setIsStripeModalVisible(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Upgrade to Bulk Access Plan"
               >
-                <Text style={styles.matchButtonText}>
-                  {isMatching ? 'Matching...' : 'Match with Verified Farmers'}
-                </Text>
+                <Ionicons name="lock-open-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.upgradeButtonText}>Upgrade to Bulk Access</Text>
               </Pressable>
             </View>
-          )}
+          </ScrollView>
+        ) : (
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Handwritten Image Upload Area */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Upload Handwritten List</Text>
+              <Text style={styles.cardSubtitle}>
+                A photo of a notebook page, e.g. "50kg Carrot, 20kg Leek, 100kg Potato".
+              </Text>
 
-          {/* Verified Match Breakdown Results */}
-          {matchResult && (
-            <>
-              {matchResult.availableItems.length > 0 && (
-                <View style={styles.card}>
-                  <Text style={styles.cardTitle}>Matched & Available</Text>
-                  {matchResult.availableItems.map((item) => (
-                    <View key={item.cropId} style={styles.availableCard}>
-                      <View style={styles.availableCardHeader}>
-                        <Text style={styles.availableCardName}>{item.cropName}</Text>
-                        <View style={styles.verifiedTag}>
-                          <Ionicons name="shield-checkmark" size={12} color="#FFFFFF" />
-                          <Text style={styles.verifiedTagText}>SLSI Verified</Text>
-                        </View>
-                      </View>
-                      <Text style={styles.availableCardFarmer}>{item.farmerName}</Text>
-                      <View style={styles.availableCardFooter}>
-                        <Text style={styles.availableCardMeta}>
-                          {item.requestedQtyKg}kg • LKR {item.pricePerKg}/kg
-                        </Text>
-                        <Text style={styles.availableCardTotal}>
-                          {formatLKR(item.totalPrice)}
-                        </Text>
-                      </View>
-                    </View>
-                  ))}
+              {imageUri ? (
+                isPresetImage ? (
+                  <View style={styles.imagePreviewPlaceholder}>
+                    <Ionicons name="document-text-outline" size={28} color="#7C3AED" />
+                    <Text style={styles.imagePreviewPlaceholderText}>Sample list loaded</Text>
+                  </View>
+                ) : (
+                  <Image source={{ uri: imageUri }} style={styles.imagePreview} />
+                )
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  <Ionicons name="camera-outline" size={28} color="#6B7280" />
+                  <Text style={styles.imagePlaceholderText}>No photo selected yet</Text>
                 </View>
               )}
 
-              {matchResult.unavailableItems.length > 0 && (
-                <View style={styles.card}>
-                  <Text style={styles.cardTitle}>Unavailable / Out of Stock</Text>
-                  {matchResult.unavailableItems.map((item, index) => (
-                    <View key={`${item.requestedItem}-${index}`} style={styles.unavailableCard}>
-                      <View style={styles.unavailableCardHeader}>
-                        <Ionicons name="warning-outline" size={16} color="#B45309" />
-                        <Text style={styles.unavailableCardName}>
-                          {item.requestedItem} ({item.requestedQtyKg}kg)
-                        </Text>
-                      </View>
-                      <Text style={styles.unavailableCardReason}>{item.reason}</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Grand Total & Checkout Bar */}
-              <View style={[styles.card, styles.summaryCard]}>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryGrandLabel}>Available Items Total</Text>
-                  <Text style={styles.summaryGrandValue}>{formatLKR(grandTotal)}</Text>
-                </View>
+              <View style={styles.uploadRow}>
+                <Pressable style={styles.uploadButton} onPress={handleUploadPress} disabled={isParsing}>
+                  <Text style={styles.uploadButtonText}>📷 Upload Handwritten List</Text>
+                </Pressable>
                 <Pressable
-                  style={[
-                    styles.checkoutButton,
-                    (matchResult.availableItems.length === 0 || isCheckingOut) &&
-                      styles.checkoutButtonDisabled,
-                  ]}
-                  onPress={handleCheckout}
-                  disabled={matchResult.availableItems.length === 0 || isCheckingOut}
+                  style={[styles.parseButton, !imageUri && styles.parseButtonDisabled]}
+                  onPress={handleParseImage}
+                  disabled={!imageUri || isParsing}
                 >
-                  <Text style={styles.checkoutButtonText}>
-                    {isCheckingOut ? 'Adding to Cart...' : 'Proceed to Bulk Checkout'}
+                  <Text style={styles.parseButtonText}>
+                    {parsedItems.length > 0 ? 'Re-scan' : 'Parse List'}
                   </Text>
                 </Pressable>
               </View>
-            </>
-          )}
 
-          {/* Developer Sandbox Toolbar */}
-          <View style={styles.sandboxCard}>
-            <Text style={styles.sandboxTitle}>Developer Sandbox</Text>
-            <View style={styles.sandboxRow}>
-              <Pressable style={styles.sandboxButton} onPress={applyPresetSample1}>
-                <Text style={styles.sandboxButtonText}>Preset: Handwritten Sample 1</Text>
-              </Pressable>
-              <Pressable style={styles.sandboxButton} onPress={applyPresetSample2}>
-                <Text style={styles.sandboxButtonText}>Preset: Handwritten Sample 2</Text>
-              </Pressable>
+              {isParsing && (
+                <View style={styles.parsingRow}>
+                  <ActivityIndicator size="small" color="#7C3AED" />
+                  <Text style={styles.parsingText}>Extracting handwritten items via AI...</Text>
+                </View>
+              )}
             </View>
-          </View>
-        </ScrollView>
-      )}
+
+            {/* Editable parsed item list */}
+            {parsedItems.length > 0 && (
+              <View style={styles.card}>
+                <View style={styles.aiEngineBadge}>
+                  <Ionicons name="sparkles" size={14} color="#FFFFFF" />
+                  <Text style={styles.aiEngineBadgeText}>AI Vision Parsed List</Text>
+                </View>
+                <Text style={styles.cardSubtitle}>
+                  Review and correct any misread items before matching.
+                </Text>
+
+                {parsedItems.map((item) => (
+                  <View key={item.id} style={styles.parsedRow}>
+                    <TextInput
+                      style={[styles.parsedInput, styles.parsedInputName]}
+                      value={item.cropName}
+                      onChangeText={(text) => updateParsedItem(item.id, { cropName: text })}
+                      placeholder="Crop name"
+                      placeholderTextColor="#6B7280"
+                    />
+                    <TextInput
+                      style={[styles.parsedInput, styles.parsedInputQty]}
+                      value={item.requestedQtyKg ? String(item.requestedQtyKg) : ''}
+                      onChangeText={(text) =>
+                        updateParsedItem(item.id, { requestedQtyKg: Number(text) || 0 })
+                      }
+                      placeholder="kg"
+                      placeholderTextColor="#6B7280"
+                      keyboardType="numeric"
+                    />
+                    <Pressable onPress={() => removeParsedItem(item.id)} style={styles.rowRemove}>
+                      <Ionicons name="close-circle" size={22} color="#6B7280" />
+                    </Pressable>
+                  </View>
+                ))}
+
+                <Pressable style={styles.addRowButton} onPress={addBlankRow}>
+                  <Ionicons name="add" size={16} color="#15803D" />
+                  <Text style={styles.addRowButtonText}>Add item</Text>
+                </Pressable>
+
+                <Pressable
+                  style={[styles.matchButton, !canMatch && styles.matchButtonDisabled]}
+                  onPress={handleMatch}
+                  disabled={!canMatch || isMatching}
+                >
+                  <Text style={styles.matchButtonText}>
+                    {isMatching ? 'Matching...' : 'Match with Verified Farmers'}
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+
+            {/* Verified Match Breakdown Results */}
+            {matchResult && (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Verified Farm Match Breakdown</Text>
+
+                {matchResult.availableItems.length > 0 && (
+                  <View style={styles.sectionBlock}>
+                    <Text style={styles.sectionTitle}>
+                      Available ({matchResult.availableItems.length})
+                    </Text>
+                    {matchResult.availableItems.map((item) => (
+                      <View key={item.cropId} style={styles.availableCard}>
+                        <View style={styles.availableCardHeader}>
+                          <Text style={styles.availableCardName}>{item.cropName}</Text>
+                          <View style={styles.verifiedTag}>
+                            <Ionicons name="shield-checkmark" size={10} color="#FFFFFF" />
+                            <Text style={styles.verifiedTagText}>SLSI Verified</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.availableCardFarmer}>
+                          {item.farmerName}
+                        </Text>
+                        <View style={styles.availableCardFooter}>
+                          <Text style={styles.availableCardMeta}>
+                            {item.requestedQtyKg} kg × {formatLKR(item.pricePerKg)}/kg
+                          </Text>
+                          <Text style={styles.availableCardTotal}>{formatLKR(item.totalPrice)}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {matchResult.unavailableItems.length > 0 && (
+                  <View style={styles.sectionBlock}>
+                    <Text style={styles.sectionTitle}>
+                      Unavailable ({matchResult.unavailableItems.length})
+                    </Text>
+                    {matchResult.unavailableItems.map((item, idx) => (
+                      <View key={`${item.requestedItem}_${idx}`} style={styles.unavailableCard}>
+                        <View style={styles.unavailableCardHeader}>
+                          <Ionicons name="alert-circle-outline" size={16} color="#B45309" />
+                          <Text style={styles.unavailableCardName}>
+                            {item.requestedQtyKg}kg {item.requestedItem}
+                          </Text>
+                        </View>
+                        <Text style={styles.unavailableCardReason}>{item.reason}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {matchResult.availableItems.length > 0 && (
+                  <View style={[styles.card, styles.summaryCard]}>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryGrandLabel}>Consolidated Total</Text>
+                      <Text style={styles.summaryGrandValue}>
+                        {formatLKR(matchResult.grandTotal)}
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={[styles.checkoutButton, isCheckingOut && styles.checkoutButtonDisabled]}
+                      onPress={handleCheckout}
+                      disabled={isCheckingOut}
+                    >
+                      <Text style={styles.checkoutButtonText}>
+                        {isCheckingOut ? 'Adding to Cart...' : 'Proceed to Checkout'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            )}
+          </ScrollView>
+        )}
       </KeyboardAvoidingView>
+
+      <StripeCheckoutModal
+        visible={isStripeModalVisible}
+        onClose={() => setIsStripeModalVisible(false)}
+        onSuccess={handleUpgradeSuccess}
+        planTitle="Bulk Order Access Plan"
+        planPrice="LKR 9,500 / month"
+        description="Unlocks the AI Bulk Orders workspace for recurring volume orders."
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: '#FAFAFA' },
-  extractOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 50,
-    backgroundColor: 'rgba(17, 24, 39, 0.72)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-  },
-  extractOverlayText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-    textAlign: 'center',
-    paddingHorizontal: 40,
-  },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FAFAFA' },
   brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    paddingBottom: 6,
+    backgroundColor: '#FAFAFA',
   },
   header: {
-    height: 56,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    backgroundColor: '#FAFAFA',
+    paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
   },
-  headerTitle: { fontSize: 18, fontWeight: '600', color: '#111827' },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: '#111827' },
   workspaceBadge: {
-    backgroundColor: '#15803D',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    backgroundColor: '#DCFCE7',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
-  workspaceBadgeText: { fontSize: 12, color: '#FFFFFF', fontWeight: '600' },
-  subBanner: {
+  workspaceBadgeLocked: {
+    backgroundColor: '#FEF3C7',
+  },
+  workspaceBadgeText: { fontSize: 11, fontWeight: '700', color: '#15803D' },
+  workspaceBadgeTextLocked: { color: '#B45309' },
+  scrollContent: { padding: 16, paddingBottom: 40, gap: 14 },
+
+  // Paywall Styles
+  paywallCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 20,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+    gap: 16,
+  },
+  paywallHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    gap: 12,
+  },
+  paywallIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paywallBadge: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#15803D',
+    letterSpacing: 0.5,
+  },
+  paywallTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+    marginTop: 2,
+  },
+  paywallSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+  },
+  benefitsList: {
+    gap: 14,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  benefitRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  checkCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  benefitTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  benefitDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 1,
+    lineHeight: 16,
+  },
+  pricingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: '#F0FDF4',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+    borderRadius: 12,
+    padding: 14,
   },
-  subBannerLocked: { backgroundColor: '#FFFBEB' },
-  subBannerText: { flex: 1, fontSize: 12, color: '#111827' },
-  subBannerToggle: { fontSize: 12, color: '#7C3AED', fontWeight: '600' },
-  lockedState: {
-    flex: 1,
+  pricingAmount: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  pricingPeriod: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 1,
+  },
+  stripeProtectedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  stripeProtectedText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#635BFF',
+  },
+  upgradeButton: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 32,
-    gap: 10,
+    backgroundColor: '#15803D',
+    borderRadius: 12,
+    paddingVertical: 14,
+    minHeight: 48,
   },
-  lockedTitle: { fontSize: 16, fontWeight: '600', color: '#111827', textAlign: 'center' },
-  lockedBody: { fontSize: 13, color: '#6B7280', textAlign: 'center', lineHeight: 20 },
-  scrollContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 32, gap: 16 },
+  upgradeButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  // Workspace Styles
   card: {
-    backgroundColor: '#F4F4F5',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 16,
     padding: 16,
-    gap: 10,
+    gap: 12,
   },
-  cardTitle: { fontSize: 16, fontWeight: '600', color: '#111827' },
-  cardSubtitle: { fontSize: 12, color: '#6B7280', marginTop: -4 },
-  imagePreview: { width: '100%', height: 180, borderRadius: 12, backgroundColor: '#E5E7EB' },
-  imagePreviewPlaceholder: {
-    width: '100%',
-    height: 140,
-    borderRadius: 12,
-    backgroundColor: '#FAFAFA',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  imagePreviewPlaceholderText: { fontSize: 12, color: '#7C3AED', fontWeight: '600' },
+  cardTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  cardSubtitle: { fontSize: 13, color: '#6B7280', lineHeight: 18 },
   imagePlaceholder: {
-    width: '100%',
-    height: 140,
-    borderRadius: 12,
-    backgroundColor: '#FAFAFA',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    height: 120,
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
     borderStyle: 'dashed',
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
   },
-  imagePlaceholderText: { fontSize: 12, color: '#6B7280' },
-  uploadRow: { flexDirection: 'row', gap: 8 },
+  imagePlaceholderText: { fontSize: 13, color: '#6B7280' },
+  imagePreview: { height: 160, borderRadius: 10, resizeMode: 'cover' },
+  imagePreviewPlaceholder: {
+    height: 90,
+    backgroundColor: '#F3E8FF',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  imagePreviewPlaceholderText: { fontSize: 13, fontWeight: '600', color: '#7C3AED' },
+  uploadRow: { flexDirection: 'row', gap: 10 },
   uploadButton: {
     flex: 1,
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
     backgroundColor: '#15803D',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-  },
-  uploadButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
-  parseButton: {
-    minHeight: 44,
+    borderRadius: 8,
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#7C3AED',
-    borderRadius: 10,
+  },
+  uploadButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 13 },
+  parseButton: {
     paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#7C3AED',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   parseButtonDisabled: { opacity: 0.5 },
-  parseButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
-  parsingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  parsingText: { fontSize: 12, color: '#7C3AED', fontStyle: 'italic' },
+  parseButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 13 },
+  parsingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+  parsingText: { fontSize: 13, color: '#7C3AED' },
   aiEngineBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     alignSelf: 'flex-start',
     backgroundColor: '#7C3AED',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
-  aiEngineBadgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
+  aiEngineBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
   parsedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   parsedInput: {
-    minHeight: 44,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    backgroundColor: '#FFFFFF',
-    color: '#111827',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     fontSize: 14,
+    backgroundColor: '#FAFAFA',
+    color: '#111827',
   },
-  parsedInputName: { flex: 2 },
-  parsedInputQty: { flex: 1 },
+  parsedInputName: { flex: 1 },
+  parsedInputQty: { width: 70 },
   rowRemove: { padding: 4 },
-  addRowButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    alignSelf: 'flex-start',
-    minHeight: 32,
-  },
-  addRowButtonText: { color: '#15803D', fontSize: 13, fontWeight: '600' },
+  addRowButton: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start' },
+  addRowButtonText: { fontSize: 13, color: '#15803D', fontWeight: '600' },
   matchButton: {
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: '#15803D',
-    borderRadius: 12,
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
     marginTop: 4,
   },
   matchButtonDisabled: { opacity: 0.5 },
-  matchButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600', letterSpacing: 0.25 },
+  matchButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  sectionBlock: { gap: 8 },
+  sectionTitle: { fontSize: 14, fontWeight: '700', color: '#374151' },
   availableCard: {
     backgroundColor: '#F0FDF4',
     borderWidth: 1,
     borderColor: '#15803D',
-    borderRadius: 12,
+    borderRadius: 10,
     padding: 12,
     gap: 4,
   },
-  availableCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
+  availableCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   availableCardName: { fontSize: 14, fontWeight: '700', color: '#111827' },
   verifiedTag: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     backgroundColor: '#15803D',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
   verifiedTagText: { color: '#FFFFFF', fontSize: 10, fontWeight: '700' },
   availableCardFarmer: { fontSize: 12, color: '#6B7280' },
-  availableCardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 4,
-  },
+  availableCardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
   availableCardMeta: { fontSize: 12, color: '#111827' },
   availableCardTotal: { fontSize: 14, fontWeight: '700', color: '#15803D' },
   unavailableCard: {
     backgroundColor: '#FFFBEB',
     borderWidth: 1,
     borderColor: '#FBBF24',
-    borderRadius: 12,
+    borderRadius: 10,
     padding: 12,
     gap: 4,
   },
   unavailableCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   unavailableCardName: { fontSize: 13, fontWeight: '700', color: '#111827' },
-  unavailableCardReason: { fontSize: 12, color: '#92400E', lineHeight: 17 },
+  unavailableCardReason: { fontSize: 12, color: '#92400E', lineHeight: 16 },
   summaryCard: { backgroundColor: '#111827', borderColor: '#111827' },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   summaryGrandLabel: { fontSize: 14, color: '#D1D5DB' },
-  summaryGrandValue: { fontSize: 20, fontWeight: '700', color: '#FFFFFF' },
+  summaryGrandValue: { fontSize: 18, fontWeight: '700', color: '#FFFFFF' },
   checkoutButton: {
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#16A34A',
-    borderRadius: 12,
+    borderRadius: 10,
     marginTop: 4,
   },
   checkoutButtonDisabled: { opacity: 0.5 },
-  checkoutButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600', letterSpacing: 0.25 },
-  sandboxCard: { backgroundColor: '#111827', borderRadius: 16, padding: 16, gap: 10 },
-  sandboxTitle: { color: '#FFFFFF', fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
-  sandboxRow: { flexDirection: 'row', gap: 8 },
-  sandboxButton: {
-    flex: 1,
-    minHeight: 44,
+  checkoutButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  extractOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    zIndex: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#374151',
-    borderRadius: 10,
-    paddingHorizontal: 6,
+    gap: 12,
   },
-  sandboxButtonText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  extractOverlayText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
 });
