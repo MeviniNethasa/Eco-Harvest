@@ -66,6 +66,7 @@ export default function FarmerOrdersScreen() {
       <StandardHeader
         title="Incoming Orders"
         subtitle="Manage and track purchases for your farm"
+        showNotificationBell
       />
 
       <FlatList

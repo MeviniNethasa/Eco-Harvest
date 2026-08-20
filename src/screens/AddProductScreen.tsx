@@ -99,6 +99,7 @@ export default function AddProductScreen() {
       <StandardHeader
         title="Add Product"
         subtitle={`Publish a new crop to ${profile?.farmName ?? 'your farm'}'s catalog`}
+        showNotificationBell
       />
 
       <KeyboardAvoidingView

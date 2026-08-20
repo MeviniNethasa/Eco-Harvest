@@ -83,6 +83,7 @@ export default function MyProductsScreen() {
       <StandardHeader
         title="My Products"
         subtitle="Manage your active marketplace listings"
+        showNotificationBell
         rightElement={
           <Pressable
             style={styles.addButton}

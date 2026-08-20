@@ -139,6 +139,7 @@ export interface CustomerProfile {
   city: string;
   district: string;
   subscriptionPlan: SubscriptionPlan;
+  favoriteFarmerIds?: string[];
   createdAt: string; // ISO timestamp
 }
 

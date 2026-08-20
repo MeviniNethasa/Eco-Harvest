@@ -33,6 +33,7 @@ import {
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
 import StandardHeader from '../components/StandardHeader';
 import StripeCheckoutModal from '../components/StripeCheckoutModal';
+import { authApi, farmerApi, stripeApi } from '../services/api';
 
 type ProfileNavProp = NativeStackNavigationProp<ProfileStackParamList, 'ProfileHome'>;
 
@@ -330,6 +331,7 @@ export default function ProfileScreen() {
         city: (customerCity || '').trim(),
         district: (customerDistrict || '').trim(),
         subscriptionPlan: planToSave,
+        favoriteFarmerIds: customerProfile?.favoriteFarmerIds || [],
         createdAt: customerProfile?.createdAt ?? new Date().toISOString(),
       };
 
@@ -337,6 +339,28 @@ export default function ProfileScreen() {
       setCustomerProfile(saved);
       setIsRegisterModalVisible(false);
       setIsStripeModalVisible(false);
+
+      // Async sync to backend API in background
+      authApi
+        .register({
+          fullName: profileToSave.fullName,
+          phoneNumber: profileToSave.phoneNumber,
+          role: 'CUSTOMER',
+          city: profileToSave.city,
+          district: profileToSave.district,
+          province: customerProvince || '',
+          subscriptionPlan: planToSave,
+        })
+        .catch((err) => console.log('Backend sync notice (offline mode active):', err.message));
+
+      if (planToSave === 'BULK_ACCESS') {
+        stripeApi
+          .createSubscription({
+            phoneNumber: profileToSave.phoneNumber,
+            planType: 'BULK_ACCESS',
+          })
+          .catch((err) => console.log('Stripe backend sync notice:', err.message));
+      }
 
       await setActiveMode('customer');
       setActiveModeState('customer');
@@ -408,6 +432,22 @@ export default function ProfileScreen() {
       const saved = await saveFarmerProfile(updated);
       setFarmerProfile(saved);
       setIsFarmerEditModalVisible(false);
+
+      // Async sync to backend API
+      farmerApi
+        .saveProfile({
+          id: saved.id,
+          ownerName: saved.legalName,
+          mobileNumber: saved.mobileNumber,
+          farmName: saved.farmName,
+          province: saved.province,
+          district: saved.district,
+          city: saved.city,
+          bankDetails: saved.bankDetails,
+          farmCoverPhotoUrl: saved.farmCoverPhotoUrl,
+        })
+        .catch((err) => console.log('Farmer backend sync notice:', err.message));
+
       Alert.alert('Farm Profile Updated', 'Your farm details have been successfully updated.');
     } catch (err) {
       console.error('Failed to update farm profile:', err);
@@ -633,6 +673,7 @@ export default function ProfileScreen() {
             ? 'Farmer Portal Details'
             : 'Customer Account'
         }
+        showNotificationBell={activeMode === 'farmer'}
         rightElement={renderHeaderRight()}
       />
 

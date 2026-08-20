@@ -480,6 +480,59 @@ export async function clearUserProfile(): Promise<void> {
   notifyUserProfileListeners(null);
 }
 
+const FAVORITE_FARMERS_KEY = '@ecoharvest/favorite-farmers';
+
+/**
+ * Retrieve the list of favorite farmer IDs bookmarked by the customer.
+ */
+export async function getFavoriteFarmerIds(): Promise<string[]> {
+  try {
+    const profile = await getUserProfile();
+    if (profile?.favoriteFarmerIds) {
+      return profile.favoriteFarmerIds;
+    }
+    const raw = await AsyncStorage.getItem(FAVORITE_FARMERS_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch (error) {
+    console.error('Failed to get favorite farmer IDs:', error);
+    return [];
+  }
+}
+
+/**
+ * Check if a specific farmer is bookmarked in favorites.
+ */
+export async function isFarmerFavorited(farmerId: string): Promise<boolean> {
+  const favorites = await getFavoriteFarmerIds();
+  return favorites.includes(farmerId);
+}
+
+/**
+ * Toggle a farmer ID in the customer's favorites list.
+ */
+export async function toggleFavoriteFarmer(farmerId: string): Promise<string[]> {
+  try {
+    const favorites = await getFavoriteFarmerIds();
+    let updated: string[];
+    if (favorites.includes(farmerId)) {
+      updated = favorites.filter((id) => id !== farmerId);
+    } else {
+      updated = [...favorites, farmerId];
+    }
+
+    const profile = await getUserProfile();
+    if (profile) {
+      profile.favoriteFarmerIds = updated;
+      await saveUserProfile(profile);
+    }
+    await AsyncStorage.setItem(FAVORITE_FARMERS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch (error) {
+    console.error('Failed to toggle favorite farmer:', error);
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Active App Mode (Customer Mode vs Farmer Mode bottom tab bar)
 // ---------------------------------------------------------------------------
