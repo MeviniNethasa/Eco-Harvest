@@ -2,6 +2,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  AppMode,
   AppNotification,
   BulkMatchItem,
   BulkMatchResult,
@@ -40,6 +41,7 @@ const CHAT_THREADS_STORAGE_KEY = '@ecoharvest/chat-threads';
 const REVIEWS_STORAGE_KEY = '@ecoharvest/product-reviews';
 const NOTIFICATIONS_STORAGE_KEY = '@ecoharvest/notifications';
 const VERIFICATION_REQUESTS_STORAGE_KEY = '@ecoharvest/verification-requests';
+const ACTIVE_MODE_STORAGE_KEY = '@ecoharvest/active-mode';
 
 /**
  * Simple pub/sub (same pattern as the crop listeners further down) so the
@@ -393,6 +395,73 @@ export async function hasCompletedFarmerOnboarding(): Promise<boolean> {
  */
 export async function clearFarmerProfile(): Promise<void> {
   await AsyncStorage.removeItem(FARMER_PROFILE_STORAGE_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Active App Mode (Customer Mode vs Farmer Mode bottom tab bar)
+// ---------------------------------------------------------------------------
+//
+// Drives which five-tab layout TabNavigator.tsx renders (RootTabParamList
+// vs FarmerTabParamList — see src/types/index.ts). Deliberately its own
+// tiny storage key rather than a field on `FarmerProfile`: a device can have
+// a farmer profile (onboarded once) yet currently be browsing in Customer
+// Mode, and switching modes shouldn't touch/re-save the farmer profile at
+// all.
+
+/**
+ * Simple pub/sub (same pattern as the cart/crop/order listeners above) so
+ * TabNavigator can swap its bottom bar layout immediately the moment the
+ * active mode changes — e.g. a "Switch to Farmer Mode" tap on the Profile
+ * tab — without waiting for a remount or a focus event.
+ */
+type ActiveModeListener = (mode: AppMode) => void;
+const activeModeListeners = new Set<ActiveModeListener>();
+
+function notifyActiveModeListeners(mode: AppMode): void {
+  activeModeListeners.forEach((listener) => listener(mode));
+}
+
+/**
+ * Subscribe to real-time active-mode changes. Returns an unsubscribe
+ * function. TabNavigator uses this (alongside an initial `getActiveMode()`
+ * read) to keep its rendered tab set in sync with whatever the Profile
+ * tab's mode toggle last set, from anywhere in the tree.
+ */
+export function subscribeToActiveMode(listener: ActiveModeListener): () => void {
+  activeModeListeners.add(listener);
+  return () => activeModeListeners.delete(listener);
+}
+
+/**
+ * Retrieve the persisted active mode. Defaults to `'customer'` — both on a
+ * fresh install (no key written yet) and if the stored value is ever
+ * something unexpected — so a corrupted/foreign value can never strand the
+ * app on an unrenderable tab layout.
+ */
+export async function getActiveMode(): Promise<AppMode> {
+  try {
+    const raw = await AsyncStorage.getItem(ACTIVE_MODE_STORAGE_KEY);
+    return raw === 'farmer' ? 'farmer' : 'customer';
+  } catch (error) {
+    console.error('Failed to read active mode from storage:', error);
+    return 'customer';
+  }
+}
+
+/**
+ * Persist the active mode and notify every live subscriber (TabNavigator's
+ * bottom bar chief among them) so the switch is reflected immediately.
+ *
+ * Intentionally does NOT check `hasCompletedFarmerOnboarding()` itself —
+ * that gate belongs to the caller (ProfileScreen's "Switch to Farmer Mode"
+ * action routes an un-onboarded farmer through `FarmerOnboardingScreen`
+ * first and only calls this once onboarding is complete), so this helper
+ * stays a plain, unconditional setter.
+ */
+export async function setActiveMode(mode: AppMode): Promise<AppMode> {
+  await AsyncStorage.setItem(ACTIVE_MODE_STORAGE_KEY, mode);
+  notifyActiveModeListeners(mode);
+  return mode;
 }
 
 // ---------------------------------------------------------------------------
@@ -1171,6 +1240,27 @@ async function saveOrders(orders: Order[]): Promise<void> {
 export async function getOrderById(orderId: string): Promise<Order | null> {
   const orders = await getOrders();
   return orders.find((o) => o.id === orderId) ?? null;
+}
+
+/**
+ * Every order containing at least one line item sold by a given farm — the
+ * Farmer Mode Orders tab's "incoming customer orders for this farm" list
+ * (FarmerOrdersScreen), as opposed to `getOrders()`'s full on-device order
+ * history, which is scoped to the current *customer's* purchases.
+ *
+ * Matches on `CartItem.farmerId` (denormalized onto each item at
+ * `addToCart` time — see `types/index.ts`), not `FarmGroup.farmName`, so a
+ * farm that renames itself after an order was placed still matches by its
+ * stable id. Orders whose items have no `farmerId` at all (e.g. sandbox/
+ * demo crops predating the Farmer-First model) never match any farm and are
+ * simply excluded, same convention as `getReviewsByFarmerId`. Newest first,
+ * same ordering as `getOrders()`.
+ */
+export async function getOrdersByFarmerId(farmerId: string): Promise<Order[]> {
+  const orders = await getOrders();
+  return orders.filter((order) =>
+    order.items.some((item) => item.farmerId === farmerId)
+  );
 }
 
 /**

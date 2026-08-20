@@ -534,7 +534,30 @@ export interface VerificationRequest {
   submittedAt: string; // ISO timestamp
 }
 
+// ---------------------------------------------------------------------------
+// Role-based dynamic bottom tab navigation (Customer Mode vs Farmer Mode)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which bottom-tab layout `TabNavigator` renders. Persisted on-device (see
+ * `getActiveMode` / `setActiveMode` / `subscribeToActiveMode` in storage.ts)
+ * so a farmer who switches into Farmer Mode from the Profile tab's toggle
+ * stays in Farmer Mode across app restarts, the same way `FarmerProfile`
+ * itself persists.
+ *
+ * Intentionally independent of `FarmerProfile.verificationStatus` — an
+ * unverified (or not-yet-onboarded) farmer never reaches `'farmer'` mode in
+ * the first place (`ProfileScreen` routes them through
+ * `FarmerOnboardingScreen` first), but once onboarded, gating individual
+ * actions (e.g. publishing while `PENDING_VERIFICATION`) is each Farmer
+ * Mode screen's responsibility, not the tab bar's.
+ */
+export type AppMode = 'customer' | 'farmer';
+
 // Navigation param lists
+
+// The Customer Mode bottom bar (default on first install / for anyone who
+// hasn't switched into Farmer Mode).
 export type RootTabParamList = {
   Marketplace: undefined;
   Orders: undefined;
@@ -552,6 +575,41 @@ export type RootTabParamList = {
   // "Reply to Customer" on an inbound inquiry.
   Chat: { threadId?: string; recipientName?: string; userRole?: 'CUSTOMER' | 'FARMER' };
 };
+
+// Farmer Mode's own five-tab bottom bar (My Products / Add Product / Orders
+// / Messages / Profile). Kept as a *separate* param list rather than folded
+// into `RootTabParamList`, because the two bars are mutually exclusive per
+// `AppMode` (TabNavigator renders one or the other, never both) and name a
+// couple of tabs identically to Customer Mode's screens ("Orders",
+// "Profile") but with entirely different components behind them.
+export type FarmerTabParamList = {
+  MyProducts: undefined;
+  AddProduct: undefined;
+  FarmerOrders: undefined;
+  // Reuses ChatScreen (same as `RootTabParamList.Chat` / `OrdersStackParamList.Chat`),
+  // just surfaced as its own always-visible tab instead of a hidden root
+  // route, since a farmer's primary reason to open Chat *is* to answer
+  // customer inquiries rather than an occasional cross-tab action.
+  // Optional (and the whole params object may be `undefined`) because the
+  // tab is entered two different ways: as a plain bottom-tab press (no
+  // params at all — `initialParams` below seeds `userRole: 'FARMER'`) or
+  // via a deep link / cross-screen navigation into a specific thread
+  // (`chatId`), same idea as `RootTabParamList.Chat`'s `threadId`.
+  Messages: { userRole?: 'FARMER' | 'CUSTOMER'; chatId?: string } | undefined;
+  Profile: undefined;
+};
+
+// Union of both bars' route names, used as the single generic type
+// parameter for the one `createBottomTabNavigator` instance in
+// TabNavigator.tsx. TabNavigator only ever *registers* one bar's `Tab.Screen`
+// entries at a time (based on the current `AppMode`), but typing the
+// navigator against the union lets both `RootTabParamList` and
+// `FarmerTabParamList` route/param shapes type-check against the same
+// `Tab.Navigator`/`Tab.Screen` instance without a second, parallel
+// navigator (and the state-loss/remount cost that would come with
+// unmounting one `NavigationContainer` and mounting another on every mode
+// switch).
+export type CombinedTabParamList = RootTabParamList & FarmerTabParamList;
 
 // Marketplace tab is its own stack (same pattern as Cart/Orders/Profile
 // below) so the Farmer-First farm directory (MarketplaceScreen) can push

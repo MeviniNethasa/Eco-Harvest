@@ -40,8 +40,17 @@ import {
 // passed at all.
 const DEFAULT_USER_ROLE: ChatMessage['senderRole'] = 'CUSTOMER';
 
+// ChatScreen backs both `RootTabParamList['Chat']` / `OrdersStackParamList['Chat']`
+// (`threadId`/`recipientName`/`userRole`) and `FarmerTabParamList['Messages']`
+// (`userRole`/`chatId` — see src/types/index.ts). Rather than importing both
+// param lists and unioning them against the concrete route name each caller
+// happens to use, `ChatRouteParams` stays a self-contained superset of every
+// param either route can pass; `chatId` is treated as an alias for
+// `threadId` below so a deep link into `Messages` with `chatId` behaves the
+// same as `Chat` with `threadId`.
 type ChatRouteParams = {
   threadId?: string;
+  chatId?: string;
   recipientName?: string;
   userRole?: ChatMessage['senderRole'];
 };
@@ -68,7 +77,11 @@ export default function ChatScreen() {
   // Generate a stable threadId once if the caller navigated in without one
   // (e.g. a fresh "Message Farmer" tap) rather than re-generating on every
   // re-render, which would orphan messages from earlier in the same visit.
-  const threadIdRef = useRef<string>(route.params?.threadId ?? generateChatThreadId());
+  // `chatId` (FarmerTabParamList['Messages']) is accepted as an alias for
+  // `threadId` (RootTabParamList['Chat']) so both routes resolve the same way.
+  const threadIdRef = useRef<string>(
+    route.params?.threadId ?? route.params?.chatId ?? generateChatThreadId()
+  );
   const threadId = threadIdRef.current;
 
   const [thread, setThread] = useState<ChatThread | null>(null);

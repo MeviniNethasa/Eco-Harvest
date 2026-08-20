@@ -1,19 +1,29 @@
 // src/navigation/TabNavigator.tsx
 
-import React, { useState, useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { NavigationContainer, useIsFocused, useNavigation } from '@react-navigation/native';
+import React, { useState, useCallback, useEffect } from 'react';
+import { ActivityIndicator, View, Text, Pressable, StyleSheet } from 'react-native';
+import { NavigationContainer, useIsFocused, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import {
+  AppMode,
   CartStackParamList,
+  CombinedTabParamList,
+  FarmerProfile,
   MarketplaceStackParamList,
   OrdersStackParamList,
-  RootTabParamList,
 } from '../types';
-import { getCartCount, subscribeToCart } from '../utils/storage';
+import {
+  getActiveMode,
+  getCartCount,
+  getFarmerProfile,
+  hasCompletedFarmerOnboarding,
+  setActiveMode,
+  subscribeToActiveMode,
+  subscribeToCart,
+} from '../utils/storage';
 import MarketplaceScreen from '../screens/MarketplaceScreen';
 import FarmerDetailScreen from '../screens/FarmerDetailScreen';
 import FarmerOnboardingScreen from '../screens/FarmerOnboardingScreen';
@@ -22,8 +32,16 @@ import OrdersScreen from '../screens/OrdersScreen';
 import DeliveryTrackingScreen from '../screens/DeliveryTrackingScreen';
 import BulkOrdersScreen from '../screens/BulkOrdersScreen';
 import ChatScreen from '../screens/ChatScreen';
+import MyProductsScreen from '../screens/MyProductsScreen';
+import AddProductScreen from '../screens/AddProductScreen';
+import FarmerOrdersScreen from '../screens/FarmerOrdersScreen';
 
-const Tab = createBottomTabNavigator<RootTabParamList>();
+// Typed against the union of both bars' route names (see
+// `CombinedTabParamList` in src/types/index.ts) so a single navigator
+// instance can register either the Customer Mode or Farmer Mode `Tab.Screen`
+// set depending on `activeMode`, without unmounting/remounting
+// `NavigationContainer` on every switch (see `TabNavigator` below).
+const Tab = createBottomTabNavigator<CombinedTabParamList>();
 
 // Screen M-02 isn't a top-level tab per the design spec ("Accessible via the
 // App Navigation stack — e.g. Profile / Switch to Farmer Mode or dedicated
@@ -118,17 +136,90 @@ function OrdersStackNavigator() {
 
 type ProfileNavProp = NativeStackNavigationProp<ProfileStackParamList, 'ProfileHome'>;
 
+// ProfileScreen backs the "Profile" tab in *both* bars (RootTabParamList's
+// Customer Mode tab and FarmerTabParamList's Farmer Mode tab — see
+// TabNavigator below), so it reads the active mode itself and renders one
+// of two views, rather than TabNavigator needing two separate profile
+// screens. This is also the single place mode switches are triggered from,
+// per the design spec's "Profile (ProfileScreen with farm details and
+// switch-role toggle)" requirement for Farmer Mode.
 function ProfileScreen() {
   const navigation = useNavigation<ProfileNavProp>();
+  const [activeMode, setActiveModeState] = useState<AppMode>('customer');
+  const [farmerProfile, setFarmerProfile] = useState<FarmerProfile | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [mode, profile] = await Promise.all([getActiveMode(), getFarmerProfile()]);
+    setActiveModeState(mode);
+    setFarmerProfile(profile);
+  }, []);
+
+  // Pick up mode changes made elsewhere (there's nowhere else today, but
+  // this keeps ProfileScreen correct if a future screen ever calls
+  // `setActiveMode` directly, e.g. a Farmer Portal dashboard shortcut).
+  useEffect(() => subscribeToActiveMode(setActiveModeState), []);
+
+  // Re-check on every focus — e.g. coming straight back from
+  // FarmerOnboardingScreen after completing onboarding, so tapping "Switch
+  // to Farmer Mode" a second time sees the freshly saved profile.
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh])
+  );
+
+  const handleSwitchToFarmer = useCallback(async () => {
+    const onboarded = await hasCompletedFarmerOnboarding();
+    if (onboarded) {
+      await setActiveMode('farmer');
+    } else {
+      navigation.navigate('FarmerOnboarding');
+    }
+  }, [navigation]);
+
+  const handleSwitchToCustomer = useCallback(async () => {
+    await setActiveMode('customer');
+  }, []);
+
+  if (activeMode === 'farmer') {
+    return (
+      <View style={styles.profileContainer}>
+        <Text style={styles.placeholderText}>{farmerProfile?.farmName ?? 'Farmer Profile'}</Text>
+        {farmerProfile?.legalName && (
+          <Text style={styles.farmerModeSubtitle}>{farmerProfile.legalName}</Text>
+        )}
+
+        <Pressable
+          style={styles.farmerModeCard}
+          onPress={() => navigation.navigate('FarmerOnboarding')}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={styles.farmerModeTitle}>Edit Farm Details</Text>
+            <Text style={styles.farmerModeSubtitle}>
+              Update your SLSI certificate, bank details, and farm profile
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#6B7280" />
+        </Pressable>
+
+        <Pressable style={styles.farmerModeCard} onPress={handleSwitchToCustomer}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.farmerModeTitle}>Switch to Customer Mode</Text>
+            <Text style={styles.farmerModeSubtitle}>
+              Go back to browsing and buying as a customer
+            </Text>
+          </View>
+          <Ionicons name="swap-horizontal-outline" size={20} color="#6B7280" />
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.profileContainer}>
       <Text style={styles.placeholderText}>Profile</Text>
 
-      <Pressable
-        style={styles.farmerModeCard}
-        onPress={() => navigation.navigate('FarmerOnboarding')}
-      >
+      <Pressable style={styles.farmerModeCard} onPress={handleSwitchToFarmer}>
         <View style={{ flex: 1 }}>
           <Text style={styles.farmerModeTitle}>Switch to Farmer Mode</Text>
           <Text style={styles.farmerModeSubtitle}>
@@ -198,6 +289,34 @@ function CartTabIcon({ color, size }: { color: string; size: number }) {
 }
 
 export default function TabNavigator() {
+  // `null` = "not loaded yet" (distinct from either real mode) so we never
+  // flash the Customer bar for a frame before a persisted Farmer Mode
+  // preference has had a chance to load from AsyncStorage.
+  const [activeMode, setActiveModeState] = useState<AppMode | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getActiveMode().then((mode) => {
+      if (!cancelled) setActiveModeState(mode);
+    });
+    // Live subscription so a mode switch triggered from ProfileScreen (see
+    // above) swaps the bottom bar immediately, without remounting
+    // NavigationContainer or waiting for a focus event.
+    const unsubscribe = subscribeToActiveMode(setActiveModeState);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  if (activeMode === null) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator color="#15803D" />
+      </View>
+    );
+  }
+
   return (
     <NavigationContainer>
       <Tab.Navigator
@@ -209,83 +328,158 @@ export default function TabNavigator() {
           tabBarLabelStyle: styles.tabLabel,
         }}
       >
-        <Tab.Screen
-          name="Marketplace"
-          component={MarketplaceStackNavigator}
-          options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="storefront-outline" size={size} color={color} />
-            ),
-          }}
-        />
-        {/* Nested stack so the Orders tab can push into Screen M-04 (Track
-            Delivery) while RootTabParamList's own "Orders: undefined" entry
-            (src/types/index.ts) stays untouched. */}
-        <Tab.Screen
-          name="Orders"
-          component={OrdersStackNavigator}
-          options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="receipt-outline" size={size} color={color} />
-            ),
-          }}
-        />
-        {/* Screen M-05: AI Bulk Orders Engine (Subscribed Customer Workspace). */}
-        <Tab.Screen
-          name="Bulk"
-          component={BulkOrdersScreen}
-          options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="cube-outline" size={size} color={color} />
-            ),
-          }}
-        />
-        <Tab.Screen
-          name="Cart"
-          component={CartStackNavigator}
-          options={{
-            tabBarIcon: ({ color, size }) => (
-              <CartTabIcon color={color} size={size} />
-            ),
-          }}
-        />
-        {/* Nested stack so Profile can push into the Farmer Portal
-            (Screen M-02) while RootTabParamList's own "Profile: undefined"
-            entry (src/types/index.ts) stays untouched. */}
-        <Tab.Screen
-          name="Profile"
-          component={ProfileStackNavigator}
-          options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="person-outline" size={size} color={color} />
-            ),
-          }}
-        />
-        {/* Screen M-06: registered on the root Tab.Navigator (per
-            RootTabParamList in src/types/index.ts) so any tab — e.g. a
-            "Message Farmer" action on MarketplaceScreen or OrdersScreen —
-            can reach Chat directly via navigation.navigate('Chat', { ... }),
-            not just the Orders stack above. `tabBarButton: () => null`
-            alone still reserves the item's flex slot in the tab bar,
-            leaving a blank gap after Profile; `tabBarItemStyle: { display:
-            'none' }` is what actually removes it from layout, so both are
-            needed together. Deliberately NOT touching `tabBarStyle` here —
-            that would hide the *entire* bar (all items) whenever Chat is
-            focused, which isn't what we want. */}
-        <Tab.Screen
-          name="Chat"
-          component={ChatScreen}
-          options={{
-            tabBarButton: () => null,
-            tabBarItemStyle: { display: 'none' },
-          }}
-        />
+        {activeMode === 'farmer' ? (
+          <>
+            {/* --- Farmer Mode bar (FarmerTabParamList) --- */}
+            <Tab.Screen
+              name="MyProducts"
+              component={MyProductsScreen}
+              options={{
+                title: 'My Products',
+                tabBarIcon: ({ color, size }) => (
+                  <Ionicons name="leaf-outline" size={size} color={color} />
+                ),
+              }}
+            />
+            <Tab.Screen
+              name="AddProduct"
+              component={AddProductScreen}
+              options={{
+                title: 'Add Product',
+                tabBarIcon: ({ color, size }) => (
+                  <Ionicons name="add-circle-outline" size={size} color={color} />
+                ),
+              }}
+            />
+            {/* Incoming customer orders for this farm — distinct component
+                from Customer Mode's OrdersStackNavigator below, but reuses
+                the "Orders" tab name/icon convention. */}
+            <Tab.Screen
+              name="FarmerOrders"
+              component={FarmerOrdersScreen}
+              options={{
+                title: 'Orders',
+                tabBarIcon: ({ color, size }) => (
+                  <Ionicons name="receipt-outline" size={size} color={color} />
+                ),
+              }}
+            />
+            {/* Screen M-06, surfaced as its own always-visible tab in
+                Farmer Mode (see `FarmerTabParamList.Messages` in
+                src/types/index.ts) rather than the hidden root route
+                Customer Mode uses below. `userRole: 'FARMER'` renders
+                ChatScreen from the farm's side of the conversation. */}
+            <Tab.Screen
+              name="Messages"
+              component={ChatScreen}
+              initialParams={{ userRole: 'FARMER' }}
+              options={{
+                tabBarIcon: ({ color, size }) => (
+                  <Ionicons name="chatbubble-outline" size={size} color={color} />
+                ),
+              }}
+            />
+            {/* Same ProfileStackNavigator as Customer Mode — ProfileScreen
+                itself reads the active mode and renders the Farmer variant
+                (farm details + "Switch to Customer Mode"). */}
+            <Tab.Screen
+              name="Profile"
+              component={ProfileStackNavigator}
+              options={{
+                tabBarIcon: ({ color, size }) => (
+                  <Ionicons name="person-outline" size={size} color={color} />
+                ),
+              }}
+            />
+          </>
+        ) : (
+          <>
+            {/* --- Customer Mode bar (RootTabParamList) --- */}
+            <Tab.Screen
+              name="Marketplace"
+              component={MarketplaceStackNavigator}
+              options={{
+                tabBarIcon: ({ color, size }) => (
+                  <Ionicons name="storefront-outline" size={size} color={color} />
+                ),
+              }}
+            />
+            {/* Nested stack so the Orders tab can push into Screen M-04 (Track
+                Delivery) while RootTabParamList's own "Orders: undefined" entry
+                (src/types/index.ts) stays untouched. */}
+            <Tab.Screen
+              name="Orders"
+              component={OrdersStackNavigator}
+              options={{
+                tabBarIcon: ({ color, size }) => (
+                  <Ionicons name="receipt-outline" size={size} color={color} />
+                ),
+              }}
+            />
+            {/* Screen M-05: AI Bulk Orders Engine (Subscribed Customer Workspace). */}
+            <Tab.Screen
+              name="Bulk"
+              component={BulkOrdersScreen}
+              options={{
+                tabBarIcon: ({ color, size }) => (
+                  <Ionicons name="cube-outline" size={size} color={color} />
+                ),
+              }}
+            />
+            <Tab.Screen
+              name="Cart"
+              component={CartStackNavigator}
+              options={{
+                tabBarIcon: ({ color, size }) => (
+                  <CartTabIcon color={color} size={size} />
+                ),
+              }}
+            />
+            {/* Nested stack so Profile can push into the Farmer Portal
+                (Screen M-02) while RootTabParamList's own "Profile: undefined"
+                entry (src/types/index.ts) stays untouched. */}
+            <Tab.Screen
+              name="Profile"
+              component={ProfileStackNavigator}
+              options={{
+                tabBarIcon: ({ color, size }) => (
+                  <Ionicons name="person-outline" size={size} color={color} />
+                ),
+              }}
+            />
+            {/* Screen M-06: registered on the root Tab.Navigator (per
+                RootTabParamList in src/types/index.ts) so any tab — e.g. a
+                "Message Farmer" action on MarketplaceScreen or OrdersScreen —
+                can reach Chat directly via navigation.navigate('Chat', { ... }),
+                not just the Orders stack above. `tabBarButton: () => null`
+                alone still reserves the item's flex slot in the tab bar,
+                leaving a blank gap after Profile; `tabBarItemStyle: { display:
+                'none' }` is what actually removes it from layout, so both are
+                needed together. Deliberately NOT touching `tabBarStyle` here —
+                that would hide the *entire* bar (all items) whenever Chat is
+                focused, which isn't what we want. */}
+            <Tab.Screen
+              name="Chat"
+              component={ChatScreen}
+              options={{
+                tabBarButton: () => null,
+                tabBarItemStyle: { display: 'none' },
+              }}
+            />
+          </>
+        )}
       </Tab.Navigator>
     </NavigationContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FAFAFA',
+  },
   tabBar: {
     height: 64,
     paddingBottom: 8,
