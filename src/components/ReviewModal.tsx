@@ -48,7 +48,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Asset } from 'expo-asset';
 import { Order, ProductReview, ReviewQualityTag } from '../types';
-import { generateReviewId, submitProductReview } from '../utils/storage';
+import { generateReviewId, saveReview } from '../utils/storage';
 
 // A 1x1 neutral-gray PNG, used only when neither the camera nor the
 // gallery is available (see the module-level comment above). Good enough
@@ -170,7 +170,9 @@ async function getTfliteModel(): Promise<any | null> {
       throw new Error('Unable to resolve a local URI for the TFLite model asset');
     }
 
-    cachedTfliteModel = await loadTensorflowModel({ url: modelUrl });
+    // Second argument is a required `TensorflowModelDelegate[]`, not optional —
+    // an empty array tells the library to use the default CPU delegate.
+    cachedTfliteModel = await loadTensorflowModel({ url: modelUrl }, []);
     return cachedTfliteModel;
   } catch (error) {
     console.warn(
@@ -508,6 +510,12 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
         // line item stands in as the reviewed crop since Screen M-07's
         // spec doesn't split reviews per line item.
         cropId: order.items[0]?.cropId ?? '',
+        // Same first-line-item stand-in as cropId above, so the review
+        // counts toward that farm's average rating on FarmerDetailScreen.
+        // Undefined (rather than throwing) if this order predates
+        // CartItem.farmerId or was placed against a farmerId-less demo
+        // crop — the review still saves, it just won't attribute to a farm.
+        farmerId: order.items[0]?.farmerId,
         rating,
         qualityTag,
         photoUri,
@@ -516,7 +524,7 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
         createdAt: new Date().toISOString(),
       };
 
-      const saved = await submitProductReview(review);
+      const saved = await saveReview(review);
       onSubmitted?.(saved);
       resetState();
       onClose();

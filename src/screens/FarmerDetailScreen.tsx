@@ -19,7 +19,7 @@ import { RouteProp, useFocusEffect, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Crop, FarmerProfile, MarketplaceStackParamList } from '../types';
-import { getFarmerById, getProductsByFarmerId } from '../utils/storage';
+import { getFarmerById, getFarmerRating, getProductsByFarmerId } from '../utils/storage';
 import ProductCard from '../components/ProductCard';
 import SLSIBadge from '../components/SLSIBadge';
 
@@ -50,6 +50,10 @@ export default function FarmerDetailScreen() {
   const [products, setProducts] = useState<Crop[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Average star rating + review count for this farm (the "★ 4.5 (2)"
+  // badge in the header). null while it hasn't loaded yet — distinct from
+  // { average: 0, count: 0 }, which means "loaded, but no reviews yet".
+  const [rating, setRating] = useState<{ average: number; count: number } | null>(null);
 
   // getFarmerById reads AsyncStorage (it checks the on-device farmer
   // profile before falling back to MOCK_FARMERS) so it's async.
@@ -75,6 +79,16 @@ export default function FarmerDetailScreen() {
     }
   }, [farmerId]);
 
+  // Same reasoning as loadProducts below re: why this is a separate
+  // useFocusEffect-driven load rather than a mount-only useEffect — a
+  // review submitted from the Orders tab's ReviewModal after a delivery
+  // should update this farm's average rating the moment the shopper
+  // navigates back here, not only after a full app remount.
+  const loadRating = useCallback(async () => {
+    const farmRating = await getFarmerRating(farmerId);
+    setRating(farmRating);
+  }, [farmerId]);
+
   // useFocusEffect (rather than a plain mount-only useEffect) so crops
   // re-query AsyncStorage every time this screen comes back into focus —
   // e.g. after navigating away to add/publish a crop for this farm and
@@ -84,7 +98,8 @@ export default function FarmerDetailScreen() {
   useFocusEffect(
     useCallback(() => {
       loadProducts();
-    }, [loadProducts])
+      loadRating();
+    }, [loadProducts, loadRating])
   );
 
   const handleAddedToCart = useCallback(() => {
@@ -120,7 +135,27 @@ export default function FarmerDetailScreen() {
             </View>
 
             <View style={styles.headerBody}>
-              <Text style={styles.farmName}>{farm?.farmName || farmName}</Text>
+              <View style={styles.farmNameRow}>
+                <Text style={styles.farmName}>{farm?.farmName || farmName}</Text>
+
+                {/* rating === null means "hasn't loaded yet" — render
+                    nothing rather than flash a "New" badge that then
+                    jumps to a real average once getFarmerRating resolves. */}
+                {rating && (
+                  <View style={styles.ratingBadge}>
+                    <Ionicons
+                      name="star"
+                      size={14}
+                      color={rating.count > 0 ? '#D97706' : '#9CA3AF'}
+                    />
+                    <Text style={styles.ratingBadgeText}>
+                      {rating.count > 0
+                        ? `${rating.average.toFixed(1)} (${rating.count})`
+                        : 'New'}
+                    </Text>
+                  </View>
+                )}
+              </View>
 
               {formatFarmLocation(farm) ? (
                 <View style={styles.locationRow}>
@@ -188,10 +223,31 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 8,
   },
+  farmNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
   farmName: {
+    flex: 1,
     fontSize: 22,
     fontWeight: '700',
     color: '#111827',
+  },
+  ratingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  ratingBadgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#92400E',
   },
   locationRow: {
     flexDirection: 'row',

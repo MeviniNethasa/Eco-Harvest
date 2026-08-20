@@ -125,6 +125,13 @@ export interface CartItem {
   province: string;
   district: string;
   city: string;
+  // Join key back to `FarmerProfile.id` (same field as `Crop.farmerId`,
+  // copied in at `addToCart` time). Optional for the same reason
+  // `Crop.farmerId` is optional — sandbox/demo crops with no real farm
+  // behind them won't have one. Lets `ReviewModal` attach a submitted
+  // review to the correct farm (`ProductReview.farmerId`) via
+  // `order.items[0].farmerId` without a second crop lookup.
+  farmerId?: string;
 }
 
 /**
@@ -398,6 +405,13 @@ export interface ChatThread {
 
 export type ReviewQualityTag = 'FRESH' | 'MINOR_ISSUES' | 'DAMAGED';
 
+// Plain alias — `ProductReview` already covers everything a per-farm
+// "Review" needs (farmerId, rating, comment, createdAt). Same relationship
+// as `Product = Crop` above: same shape, same storage.ts helpers, just the
+// more natural name for code (like the farm-rating helpers below) that
+// talks about "reviews" in general rather than Screen M-07 specifically.
+export type Review = ProductReview;
+
 /**
  * A single customer review of a delivered order (design.md Screen M-07).
  * Requires a hardware-captured `photoUri` and a derived `aiFreshnessScore`
@@ -409,6 +423,15 @@ export interface ProductReview {
   id: string;
   orderId: string;
   cropId: string;
+  // Join key back to `FarmerProfile.id`, copied from
+  // `order.items[0].farmerId` when the review is submitted (see
+  // ReviewModal.tsx). Lets `getReviewsByFarmerId`/`getFarmerRating`
+  // (storage.ts) aggregate a farm's average star rating for
+  // FarmerDetailScreen. Optional — reviews submitted before this field
+  // existed, or against orders whose crops had no `farmerId` (e.g. the
+  // sandbox demo crop pool), won't have one and are simply excluded from
+  // any single farm's rating.
+  farmerId?: string;
   rating: number; // 1-5
   qualityTag: ReviewQualityTag;
   photoUri: string;

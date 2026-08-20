@@ -112,6 +112,7 @@ export async function addToCart(crop: Crop, quantity: number): Promise<CartItem[
       province: crop.province,
       district: crop.district,
       city: crop.city,
+      farmerId: crop.farmerId,
     });
   }
 
@@ -1298,6 +1299,48 @@ export async function submitProductReview(review: ProductReview): Promise<Produc
   await saveOrders(updatedOrders);
 
   return review;
+}
+
+/**
+ * Alias for `submitProductReview`, exported under the more general name so
+ * call sites that just want to "save a review" (e.g. a future non-M-07
+ * review flow) don't need to know about the Screen M-07-specific name.
+ * Same persistence, same `Order.isReviewed` side effect.
+ */
+export const saveReview = submitProductReview;
+
+/**
+ * Reviews left for a specific farm, newest first — every persisted review
+ * whose `farmerId` matches, regardless of which order/crop it was left
+ * against. Powers the average-rating badge on FarmerDetailScreen.
+ * Reviews with no `farmerId` (pre-dating this field, or against an
+ * orphaned demo crop with no real farm) are never included.
+ */
+export async function getReviewsByFarmerId(farmerId: string): Promise<ProductReview[]> {
+  const reviews = await getProductReviews();
+  return reviews
+    .filter((r) => r.farmerId === farmerId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+/**
+ * Average star rating + review count for a farm (FarmerDetailScreen's
+ * "★ 4.5 (2)" badge). `average` is rounded to one decimal place; both
+ * fields come back as `0` when the farm has no reviews yet — callers
+ * should treat `count === 0` as "New" / "No reviews" rather than
+ * rendering "★ 0.0".
+ */
+export async function getFarmerRating(
+  farmerId: string
+): Promise<{ average: number; count: number }> {
+  const reviews = await getReviewsByFarmerId(farmerId);
+  const count = reviews.length;
+  if (count === 0) {
+    return { average: 0, count: 0 };
+  }
+  const total = reviews.reduce((sum, r) => sum + r.rating, 0);
+  const average = Math.round((total / count) * 10) / 10;
+  return { average, count };
 }
 
 // ---------------------------------------------------------------------------
