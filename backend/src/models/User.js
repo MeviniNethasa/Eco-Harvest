@@ -10,9 +10,13 @@ const UserSchema = new mongoose.Schema(
     },
     phoneNumber: {
       type: String,
-      required: [true, 'Phone number is required'],
       trim: true,
-      unique: true,
+      index: { unique: true, sparse: true },
+    },
+    mobile: {
+      type: String,
+      trim: true,
+      index: { unique: true, sparse: true },
     },
     password: {
       type: String,
@@ -54,5 +58,12 @@ const UserSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// Keep phoneNumber and mobile in sync
+UserSchema.pre('save', function (next) {
+  if (this.phoneNumber && !this.mobile) this.mobile = this.phoneNumber;
+  if (this.mobile && !this.phoneNumber) this.phoneNumber = this.mobile;
+  next();
+});
 
 module.exports = mongoose.model('User', UserSchema);

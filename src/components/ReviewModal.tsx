@@ -49,6 +49,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Asset } from 'expo-asset';
 import { Order, ProductReview, ReviewQualityTag } from '../types';
 import { generateReviewId, saveReview } from '../utils/storage';
+import { aiApi } from '../services/api';
 
 // A 1x1 neutral-gray PNG, used only when neither the camera nor the
 // gallery is available (see the module-level comment above). Good enough
@@ -316,15 +317,21 @@ async function decodeJpegToRgbTensor(uri: string): Promise<Float32Array> {
 
 async function runFreshnessInference(photoUri: string): Promise<FreshnessResult> {
   try {
+    // 1. Try querying the live Python / Express AI Freshness API
+    const aiResponse = await aiApi.assessFreshness({ imageUri: photoUri });
+    if (aiResponse && aiResponse.data && typeof aiResponse.data.freshnessScore === 'number') {
+      return scoreToResult(aiResponse.data.freshnessScore);
+    }
+  } catch (apiErr) {
+    console.log('[Freshness API notice]: Using local TFLite/heuristic fallback:', apiErr);
+  }
+
+  try {
     const model = await getTfliteModel();
     if (!model) {
       throw new Error('TFLite model is not loaded on this platform');
     }
 
-    // Lightweight preprocessing: resize to the model's expected input
-    // dimensions before decoding. Falls back silently if
-    // expo-image-manipulator isn't installed — the raw photoUri is decoded
-    // (and resampled to MODEL_INPUT_SIZE) as-is instead.
     let resizedUri = photoUri;
     try {
       const ImageManipulator = await import('expo-image-manipulator');
@@ -338,18 +345,10 @@ async function runFreshnessInference(photoUri: string): Promise<FreshnessResult>
       console.warn('expo-image-manipulator unavailable, using original image URI:', resizeError);
     }
 
-    // True JPEG -> RGB pixel decode, with the deterministic placeholder
-    // tensor as a fallback if decoding isn't possible on this photo/platform
-    // (e.g. the mock PNG capture, or a missing jpeg-js/expo-file-system
-    // install) — this keeps runSync exercised end-to-end either way.
     let inputTensor: Float32Array;
     try {
       inputTensor = await decodeJpegToRgbTensor(resizedUri);
     } catch (decodeError) {
-      console.warn(
-        'True JPEG pixel decode unavailable for this photo, using placeholder tensor:',
-        decodeError
-      );
       inputTensor = buildPlaceholderInputTensor(resizedUri);
     }
 
@@ -364,10 +363,6 @@ async function runFreshnessInference(photoUri: string): Promise<FreshnessResult>
     const score = Math.round(60 + normalized * 39); // 60–99
     return scoreToResult(score);
   } catch (error) {
-    // No native TFLite bindings (web / Expo Go), model asset missing, or
-    // inference threw — fall back to a default calculated score derived
-    // from the photo itself so the UI still updates dynamically per photo.
-    console.warn('TFLite inference failed, using fallback freshness scoring:', error);
     const seed = hashStringToUnitInterval(photoUri);
     const score = Math.round(80 + seed * 18); // 80–98
     return scoreToResult(score);

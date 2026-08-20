@@ -14,8 +14,8 @@ const app = express();
 
 // Middleware
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -31,6 +31,7 @@ app.use('/api/messages', require('./routes/messageRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/stripe', require('./routes/stripeRoutes'));
 app.use('/api/farmers', require('./routes/farmerRoutes'));
+app.use('/api/ai', require('./routes/aiRoutes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -58,9 +59,30 @@ app.use((req, res) => {
   });
 });
 
-// Global error handling middleware
+// Database & Global error handling middleware
 app.use((err, req, res, next) => {
-  console.error('[Unhandled Server Error]:', err.stack);
+  // Catch MongoDB duplicate key error (code 11000) cleanly
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyPattern || err.keyValue || {})[0] || 'field';
+    return res.status(400).json({
+      success: false,
+      message: `An account or record with this ${field} already exists.`,
+      errorType: 'DUPLICATE_KEY_ERROR',
+      field,
+    });
+  }
+
+  // Handle Mongoose validation errors
+  if (err.name === 'ValidationError') {
+    const messages = Object.values(err.errors).map((val) => val.message);
+    return res.status(400).json({
+      success: false,
+      message: messages.join(', '),
+      errorType: 'VALIDATION_ERROR',
+    });
+  }
+
+  console.error('[Unhandled Server Error]:', err.stack || err);
   res.status(500).json({
     success: false,
     message: err.message || 'Internal Server Error',
@@ -73,6 +95,7 @@ const server = app.listen(PORT, () => {
   console.log(`=============================================`);
   console.log(`🚀 EcoHarvest Express Server running on port ${PORT}`);
   console.log(`📡 Base URL: http://localhost:${PORT}/api`);
+  console.log(`🤖 AI Proxy Bridge: http://localhost:${PORT}/api/ai`);
   console.log(`❤️  Health Check: http://localhost:${PORT}/api/health`);
   console.log(`=============================================`);
 });

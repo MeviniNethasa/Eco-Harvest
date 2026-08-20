@@ -354,6 +354,7 @@ export interface ExtractedListItem {
   rawText: string;
   cropName: string;
   requestedQtyKg: number;
+  confidence?: number;
 }
 
 /**

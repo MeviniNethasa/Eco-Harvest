@@ -85,6 +85,12 @@ export const productApi = {
       body: JSON.stringify(payload),
     }),
 
+  createProduct: (payload: any) =>
+    request<{ success: boolean; message: string; data: any }>('/products', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   delete: (id: string) =>
     request<{ success: boolean; message: string }>(`/products/${id}`, {
       method: 'DELETE',
@@ -232,3 +238,49 @@ export const farmerApi = {
       body: JSON.stringify(payload),
     }),
 };
+
+// ---------------------------------------------------------------------------
+// AI & Computer Vision Service API (Express Proxy -> Python Service :5002)
+// ---------------------------------------------------------------------------
+export const aiApi = {
+  extractHandwrittenList: (payload: { imageUri?: string; imageBase64?: string; text?: string }) =>
+    request<{
+      success: boolean;
+      source: string;
+      raw_text?: string;
+      extracted_items?: any[];
+      items?: any[];
+      data?: any;
+    }>('/ai/extract-handwritten-list', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  assessFreshness: (payload: {
+    imageUri?: string;
+    imageBase64?: string;
+    cropCategory?: string;
+    cropName?: string;
+  }) =>
+    request<{
+      success: boolean;
+      source: string;
+      data: {
+        cropName: string;
+        predictedState: string;
+        freshnessScore: number;
+        confidence: number;
+        isSLSIVerified: boolean;
+        slsiGrade: string;
+        visualInspection?: any;
+        shelfLifeEstimateDays?: number;
+      };
+    }>('/ai/assess-freshness', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getHealth: () =>
+    request<{ success: boolean; service: string; pythonServiceStatus: string }>('/ai/health'),
+};
+
