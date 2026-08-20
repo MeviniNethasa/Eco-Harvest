@@ -40,6 +40,7 @@ import {
   publishCrop,
   saveFarmerProfile,
   subscribeToNotifications,
+  syncFarmerProfileToVerificationQueue,
 } from '../utils/storage';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
 
@@ -84,6 +85,7 @@ const DEFAULT_COMMISSION_RATE = 5;
 const VERIFIED_COMMISSION_RATE = 2.5;
 
 const PLACEHOLDER_CROP_IMAGE = 'https://placehold.co/400x400/16A34A/FFFFFF?text=Crop';
+const PLACEHOLDER_FARM_COVER_IMAGE = 'https://placehold.co/800x400/15803D/FFFFFF?text=Farm+Cover+Photo';
 
 // ---------------------------------------------------------------------------
 // Customer Inquiries & Messages (Farmer Portal → Screen M-06 chat threads)
@@ -242,6 +244,8 @@ export default function FarmerOnboardingScreen() {
   const [legalName, setLegalName] = useState('');
   const [mobileNumber, setMobileNumber] = useState('');
   const [farmName, setFarmName] = useState('');
+  const [farmCoverPhotoUrl, setFarmCoverPhotoUrl] = useState<string | null>(null);
+  const [showCoverUrlInput, setShowCoverUrlInput] = useState(false);
   const [province, setProvince] = useState<string | null>(null);
   const [district, setDistrict] = useState<string | null>(null);
   const [city, setCity] = useState<string | null>(null);
@@ -363,6 +367,8 @@ export default function FarmerOnboardingScreen() {
     setLegalName('');
     setMobileNumber('');
     setFarmName('');
+    setFarmCoverPhotoUrl(null);
+    setShowCoverUrlInput(false);
     setProvince(null);
     setDistrict(null);
     setCity(null);
@@ -380,6 +386,8 @@ export default function FarmerOnboardingScreen() {
     setLegalName(p.legalName);
     setMobileNumber(p.mobileNumber);
     setFarmName(p.farmName);
+    setFarmCoverPhotoUrl(p.farmCoverPhotoUrl ?? null);
+    setShowCoverUrlInput(false);
     setProvince(p.province);
     setDistrict(p.district);
     setCity(p.city);
@@ -446,6 +454,32 @@ export default function FarmerOnboardingScreen() {
     }
   };
 
+  // ---- Farm cover photo picker ----
+  // Farm-First public profile hero image (FarmerProfile.farmCoverPhotoUrl).
+  // Prefers the native gallery picker; the "Or paste an image URL" field
+  // right below in the UI is a fallback for simulators/web where the
+  // gallery isn't available, or a farmer who'd rather link a hosted image.
+  const handleSelectCoverPhoto = async () => {
+    const hasPermission = await ensureGalleryPermission();
+    if (!hasPermission) return;
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.7,
+        allowsEditing: true,
+        aspect: [2, 1],
+      });
+      if (!result.canceled && result.assets?.length) {
+        setFarmCoverPhotoUrl(result.assets[0].uri);
+        setShowCoverUrlInput(false);
+      }
+    } catch (err) {
+      console.error('Failed to open image library for farm cover photo:', err);
+      Alert.alert('Something went wrong', 'Could not open the photo library. Please try again.');
+    }
+  };
+
   // ---- Crop image picker ----
   const handleSelectCropImage = async () => {
     const hasPermission = await ensureGalleryPermission();
@@ -488,6 +522,10 @@ export default function FarmerOnboardingScreen() {
         legalName: legalName.trim(),
         mobileNumber: mobileNumber.trim(),
         farmName: farmName.trim(),
+        // Optional — trim a pasted URL down to null rather than saving an
+        // empty string, so `farmCoverPhotoUrl` stays either a real value
+        // or unset (screens fall back to a placeholder either way).
+        farmCoverPhotoUrl: farmCoverPhotoUrl?.trim() ? farmCoverPhotoUrl.trim() : undefined,
         province: province as string,
         district: district as string,
         city: city as string,
@@ -507,6 +545,7 @@ export default function FarmerOnboardingScreen() {
       };
 
       const saved = await saveFarmerProfile(profileToSave);
+      await syncToAdminVerificationQueue(saved);
       const wasFirstTime = !profile;
       setProfile(saved);
       setIsEditingProfile(false);
@@ -522,6 +561,23 @@ export default function FarmerOnboardingScreen() {
       Alert.alert('Something went wrong', 'Could not save your profile. Please try again.');
     } finally {
       setIsSavingProfile(false);
+    }
+  };
+
+  // ---- Bridge to Screen A-01: Admin Verification Desk ----
+  // Whenever a profile lands on PENDING_VERIFICATION — either the real
+  // "Complete Onboarding" / "Save Changes" submit flow below, or the Dev
+  // Sandbox's "Set Pending" toggle — push it into the
+  // `@ecoharvest/verification-requests` queue so it shows up on the Admin
+  // Verification Desk immediately, instead of only ever living in
+  // `@ecoharvest/farmer-profile` (the bug this fixes). A no-op for any
+  // other status, since only a PENDING submission needs admin attention.
+  const syncToAdminVerificationQueue = async (savedProfile: FarmerProfile) => {
+    if (savedProfile.verificationStatus !== 'PENDING_VERIFICATION') return;
+    try {
+      await syncFarmerProfileToVerificationQueue(savedProfile);
+    } catch (err) {
+      console.error('Failed to sync SLSI submission into the admin verification queue:', err);
     }
   };
 
@@ -624,6 +680,7 @@ export default function FarmerOnboardingScreen() {
         isSLSIVerified: status === 'VERIFIED',
         commissionRate: nextCommissionRate,
       });
+      await syncToAdminVerificationQueue(updated);
       setProfile(updated);
     } catch (err) {
       console.error('Failed to update verification status:', err);
@@ -690,6 +747,12 @@ export default function FarmerOnboardingScreen() {
       // here. isSLSIVerified is intentionally omitted — publishCrop()
       // derives it from the farmer's saved verificationStatus.
       const cropInput: Omit<Crop, 'id' | 'isSLSIVerified'> = {
+        // Join key back to FarmerProfile.id — without this,
+        // getProductsByFarmerId() in storage.ts can never match the crop to
+        // this farm's storefront (it filters strictly on farmerId), so the
+        // listing would publish successfully but never appear on
+        // FarmerDetailScreen.
+        farmerId: profile.id,
         name: cropName.trim(),
         category: category as CropCategory,
         pricePerUnit: Number(pricePerUnit),
@@ -788,6 +851,43 @@ export default function FarmerOnboardingScreen() {
                   value={farmName}
                   onChangeText={setFarmName}
                 />
+              </Field>
+
+              <Field label="Farm Cover Photo">
+                <Pressable style={styles.coverPhotoTrigger} onPress={handleSelectCoverPhoto}>
+                  <Image
+                    source={{ uri: farmCoverPhotoUrl || PLACEHOLDER_FARM_COVER_IMAGE }}
+                    style={styles.coverPhotoPreview}
+                  />
+                  <View style={styles.coverPhotoOverlay}>
+                    <Text style={styles.coverPhotoOverlayText}>
+                      {farmCoverPhotoUrl ? 'Change Cover Photo' : 'Add Cover Photo'}
+                    </Text>
+                  </View>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => setShowCoverUrlInput((prev) => !prev)}
+                  hitSlop={8}
+                  style={styles.coverPhotoUrlToggle}
+                >
+                  <Text style={styles.coverPhotoUrlToggleText}>
+                    {showCoverUrlInput ? 'Hide image URL field' : 'Or paste an image URL instead'}
+                  </Text>
+                </Pressable>
+
+                {showCoverUrlInput && (
+                  <TextInput
+                    style={[styles.input, { marginTop: 8 }]}
+                    placeholder="https://example.com/your-farm-photo.jpg"
+                    placeholderTextColor={tokens.colorTextMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    value={farmCoverPhotoUrl ?? ''}
+                    onChangeText={(text) => setFarmCoverPhotoUrl(text)}
+                  />
+                )}
               </Field>
 
               <Field label="Location" error={onboardingErrors.location}>
@@ -1323,6 +1423,41 @@ const styles = StyleSheet.create({
   statusTagText: {
     fontSize: 12,
     fontWeight: '500',
+  },
+  coverPhotoTrigger: {
+    height: 140,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: tokens.colorBgCard,
+    borderWidth: 1,
+    borderColor: tokens.colorBorderGray,
+  },
+  coverPhotoPreview: {
+    width: '100%',
+    height: '100%',
+  },
+  coverPhotoOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingVertical: 8,
+    alignItems: 'center',
+    backgroundColor: 'rgba(17,24,39,0.55)',
+  },
+  coverPhotoOverlayText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  coverPhotoUrlToggle: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  coverPhotoUrlToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.colorSecondaryLeaf,
   },
   imageTrigger: {
     minHeight: 120,

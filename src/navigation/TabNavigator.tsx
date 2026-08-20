@@ -7,9 +7,15 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-import { CartStackParamList, OrdersStackParamList, RootTabParamList } from '../types';
+import {
+  CartStackParamList,
+  MarketplaceStackParamList,
+  OrdersStackParamList,
+  RootTabParamList,
+} from '../types';
 import { getCartCount, subscribeToCart } from '../utils/storage';
 import MarketplaceScreen from '../screens/MarketplaceScreen';
+import FarmerDetailScreen from '../screens/FarmerDetailScreen';
 import FarmerOnboardingScreen from '../screens/FarmerOnboardingScreen';
 import CartScreen from '../screens/CartScreen';
 import OrdersScreen from '../screens/OrdersScreen';
@@ -28,6 +34,31 @@ export type ProfileStackParamList = {
   FarmerOnboarding: undefined;
 };
 const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
+
+// --- Marketplace (Farm directory -> Farmer storefront) ---
+//
+// PART 2 REFACTOR: MarketplaceScreen moved from a flat product grid to a
+// directory of farms. It now needs its own stack so tapping a Farm Card can
+// push into FarmerDetailScreen (that farm's storefront + product grid),
+// same pattern as CartStack/OrdersStack below.
+
+const MarketplaceStack = createNativeStackNavigator<MarketplaceStackParamList>();
+
+function MarketplaceStackNavigator() {
+  return (
+    <MarketplaceStack.Navigator screenOptions={{ headerShown: false }}>
+      <MarketplaceStack.Screen name="MarketplaceHome" component={MarketplaceScreen} />
+      <MarketplaceStack.Screen
+        name="FarmerDetailScreen"
+        component={FarmerDetailScreen}
+        options={({ route }) => ({
+          headerShown: true,
+          title: route.params?.farmName || 'Farm',
+        })}
+      />
+    </MarketplaceStack.Navigator>
+  );
+}
 
 // --- Cart (Screen M-03 -> Screen M-04) ---
 //
@@ -180,7 +211,7 @@ export default function TabNavigator() {
       >
         <Tab.Screen
           name="Marketplace"
-          component={MarketplaceScreen}
+          component={MarketplaceStackNavigator}
           options={{
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="storefront-outline" size={size} color={color} />

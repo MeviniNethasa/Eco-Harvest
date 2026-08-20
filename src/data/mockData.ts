@@ -1,6 +1,6 @@
 // src/data/mockData.ts
 
-import { Crop, CropCategory } from '../types';
+import { Crop, CropCategory, FarmerProfile } from '../types';
 
 export const CROP_CATEGORIES: CropCategory[] = [
   'Vegetables',
@@ -28,9 +28,220 @@ export const SL_LOCATIONS: Record<string, Record<string, string[]>> = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Farmer-First: registered farm profiles
+// ---------------------------------------------------------------------------
+// One `FarmerProfile` per farm shown in `MOCK_CROPS` below. `id` is the join
+// key every crop's `farmerId` points back to (see `getFarmers` /
+// `getProductsByFarmerId` in storage.ts). `bankDetails` and
+// `slsiCertificateUri` are populated with harmless placeholder values since
+// this directory is demo/browse data, not a real onboarding record.
+export const MOCK_FARMERS: FarmerProfile[] = [
+  {
+    id: 'farmer-001',
+    legalName: 'K. A. Somasiri',
+    mobileNumber: '+94771234001',
+    farmName: 'Green Valley Farm',
+    province: 'Central',
+    district: 'NuwaraEliya',
+    city: 'Nuwara Eliya',
+    bankDetails: {
+      bankName: 'Bank of Ceylon',
+      branchCode: '004',
+      accountNumber: '0041234001',
+      accountHolderName: 'K. A. Somasiri',
+    },
+    slsiCertificateUri: 'mock://certificates/farmer-001.pdf',
+    verificationStatus: 'VERIFIED',
+    isSLSIVerified: true,
+    commissionRate: 2.5,
+    farmCoverPhotoUrl:
+      'https://images.unsplash.com/photo-1500937386664-56d1dfef3854?w=1200',
+    description:
+      'Highland cool-climate vegetable farm in Nuwara Eliya, SLSI-certified organic since 2019.',
+  },
+  {
+    id: 'farmer-002',
+    legalName: 'W. M. Ranasinghe',
+    mobileNumber: '+94771234002',
+    farmName: 'Sunrise Agro',
+    province: 'Central',
+    district: 'Matale',
+    city: 'Dambulla',
+    bankDetails: {
+      bankName: 'Peoples Bank',
+      branchCode: '012',
+      accountNumber: '0121234002',
+      accountHolderName: 'W. M. Ranasinghe',
+    },
+    slsiCertificateUri: null,
+    verificationStatus: 'UNVERIFIED',
+    isSLSIVerified: false,
+    commissionRate: 5,
+    farmCoverPhotoUrl:
+      'https://images.unsplash.com/photo-1500651230702-0e2d8a49d4ad?w=1200',
+    description: 'Family-run tomato and vegetable smallholding in the Dambulla dry zone.',
+  },
+  {
+    id: 'farmer-003',
+    legalName: 'D. G. Priyantha',
+    mobileNumber: '+94771234003',
+    farmName: 'Ruhunu Orchards',
+    province: 'Southern',
+    district: 'Hambantota',
+    city: 'Tissamaharama',
+    bankDetails: {
+      bankName: 'Hatton National Bank',
+      branchCode: '021',
+      accountNumber: '0211234003',
+      accountHolderName: 'D. G. Priyantha',
+    },
+    slsiCertificateUri: 'mock://certificates/farmer-003.pdf',
+    verificationStatus: 'VERIFIED',
+    isSLSIVerified: true,
+    commissionRate: 2.5,
+    farmCoverPhotoUrl:
+      'https://images.unsplash.com/photo-1591857177580-dc82b9ac4e1e?w=1200',
+    description: 'Mango orchards in the southern dry zone, SLSI-certified organic.',
+  },
+  {
+    id: 'farmer-004',
+    legalName: 'S. K. Fernando',
+    mobileNumber: '+94771234004',
+    farmName: 'Kalutara Growers',
+    province: 'Western',
+    district: 'Kalutara',
+    city: 'Horana',
+    bankDetails: {
+      bankName: 'Commercial Bank',
+      branchCode: '033',
+      accountNumber: '0331234004',
+      accountHolderName: 'S. K. Fernando',
+    },
+    slsiCertificateUri: null,
+    verificationStatus: 'UNVERIFIED',
+    isSLSIVerified: false,
+    commissionRate: 5,
+    farmCoverPhotoUrl:
+      'https://images.unsplash.com/photo-1464226184884-fa280b87c399?w=1200',
+    description: "Banana growers' cooperative serving the Kalutara district.",
+  },
+  {
+    id: 'farmer-005',
+    legalName: 'A. B. Wijesekara',
+    mobileNumber: '+94771234005',
+    farmName: 'Paddy Fields Co-op',
+    province: 'Southern',
+    district: 'Matara',
+    city: 'Weligama',
+    bankDetails: {
+      bankName: 'Bank of Ceylon',
+      branchCode: '045',
+      accountNumber: '0451234005',
+      accountHolderName: 'A. B. Wijesekara',
+    },
+    slsiCertificateUri: 'mock://certificates/farmer-005.pdf',
+    verificationStatus: 'VERIFIED',
+    isSLSIVerified: true,
+    commissionRate: 2.5,
+    farmCoverPhotoUrl:
+      'https://images.unsplash.com/photo-1500595046743-cd271d694d30?w=1200',
+    description: 'Smallholder paddy co-operative growing traditional red rice varieties.',
+  },
+  {
+    id: 'farmer-006',
+    legalName: 'N. P. de Silva',
+    mobileNumber: '+94771234006',
+    farmName: 'Galle Spice Estate',
+    province: 'Southern',
+    district: 'Galle',
+    city: 'Galle',
+    bankDetails: {
+      bankName: 'Sampath Bank',
+      branchCode: '057',
+      accountNumber: '0571234006',
+      accountHolderName: 'N. P. de Silva',
+    },
+    slsiCertificateUri: 'mock://certificates/farmer-006.pdf',
+    verificationStatus: 'VERIFIED',
+    isSLSIVerified: true,
+    commissionRate: 2.5,
+    farmCoverPhotoUrl:
+      'https://images.unsplash.com/photo-1509587584298-0f3b3a3a1797?w=1200',
+    description: 'Heritage cinnamon estate near Galle, SLSI-certified organic spice grower.',
+  },
+  {
+    id: 'farmer-007',
+    legalName: 'R. M. Bandara',
+    mobileNumber: '+94771234007',
+    farmName: 'Kandy Highland Spices',
+    province: 'Central',
+    district: 'Kandy',
+    city: 'Gampola',
+    bankDetails: {
+      bankName: 'Peoples Bank',
+      branchCode: '063',
+      accountNumber: '0631234007',
+      accountHolderName: 'R. M. Bandara',
+    },
+    slsiCertificateUri: null,
+    verificationStatus: 'PENDING_VERIFICATION',
+    isSLSIVerified: false,
+    commissionRate: 5,
+    farmCoverPhotoUrl:
+      'https://images.unsplash.com/photo-1622383563227-04401ab4e5ea?w=1200',
+    description: 'Highland black pepper smallholding above Gampola.',
+  },
+  {
+    id: 'farmer-008',
+    legalName: 'C. L. Perera',
+    mobileNumber: '+94771234008',
+    farmName: 'Gampaha Fruit Growers',
+    province: 'Western',
+    district: 'Gampaha',
+    city: 'Negombo',
+    bankDetails: {
+      bankName: 'Commercial Bank',
+      branchCode: '071',
+      accountNumber: '0711234008',
+      accountHolderName: 'C. L. Perera',
+    },
+    slsiCertificateUri: null,
+    verificationStatus: 'UNVERIFIED',
+    isSLSIVerified: false,
+    commissionRate: 5,
+    farmCoverPhotoUrl:
+      'https://images.unsplash.com/photo-1546470427-e26264be0b0d?w=1200',
+    description: 'Coastal fruit growers collective supplying pineapple around Negombo.',
+  },
+  {
+    id: 'farmer-009',
+    legalName: 'T. M. Jayasuriya',
+    mobileNumber: '+94771234009',
+    farmName: 'Colombo Rural Collective',
+    province: 'Western',
+    district: 'Colombo',
+    city: 'Homagama',
+    bankDetails: {
+      bankName: 'Bank of Ceylon',
+      branchCode: '082',
+      accountNumber: '0821234009',
+      accountHolderName: 'T. M. Jayasuriya',
+    },
+    slsiCertificateUri: 'mock://certificates/farmer-009.pdf',
+    verificationStatus: 'VERIFIED',
+    isSLSIVerified: true,
+    commissionRate: 2.5,
+    farmCoverPhotoUrl:
+      'https://images.unsplash.com/photo-1625246333195-78d9c38ad449?w=1200',
+    description: 'Peri-urban grain-growers collective on the outskirts of Colombo.',
+  },
+];
+
 export const MOCK_CROPS: Crop[] = [
   {
     id: 'crop-001',
+    farmerId: 'farmer-001',
     name: 'Carrot',
     category: 'Vegetables',
     pricePerUnit: 400,
@@ -44,6 +255,7 @@ export const MOCK_CROPS: Crop[] = [
   },
   {
     id: 'crop-002',
+    farmerId: 'farmer-002',
     name: 'Tomato',
     category: 'Vegetables',
     pricePerUnit: 320,
@@ -57,6 +269,7 @@ export const MOCK_CROPS: Crop[] = [
   },
   {
     id: 'crop-003',
+    farmerId: 'farmer-003',
     name: 'Mango',
     category: 'Fruits',
     pricePerUnit: 550,
@@ -70,6 +283,7 @@ export const MOCK_CROPS: Crop[] = [
   },
   {
     id: 'crop-004',
+    farmerId: 'farmer-004',
     name: 'Banana',
     category: 'Fruits',
     pricePerUnit: 220,
@@ -83,6 +297,7 @@ export const MOCK_CROPS: Crop[] = [
   },
   {
     id: 'crop-005',
+    farmerId: 'farmer-005',
     name: 'Red Rice',
     category: 'Grains',
     pricePerUnit: 280,
@@ -96,6 +311,7 @@ export const MOCK_CROPS: Crop[] = [
   },
   {
     id: 'crop-006',
+    farmerId: 'farmer-006',
     name: 'Ceylon Cinnamon',
     category: 'Spices',
     pricePerUnit: 1200,
@@ -109,6 +325,7 @@ export const MOCK_CROPS: Crop[] = [
   },
   {
     id: 'crop-007',
+    farmerId: 'farmer-007',
     name: 'Black Pepper',
     category: 'Spices',
     pricePerUnit: 900,
@@ -122,6 +339,7 @@ export const MOCK_CROPS: Crop[] = [
   },
   {
     id: 'crop-008',
+    farmerId: 'farmer-001',
     name: 'Cabbage',
     category: 'Vegetables',
     pricePerUnit: 180,
@@ -135,6 +353,7 @@ export const MOCK_CROPS: Crop[] = [
   },
   {
     id: 'crop-009',
+    farmerId: 'farmer-008',
     name: 'Pineapple',
     category: 'Fruits',
     pricePerUnit: 350,
@@ -148,6 +367,7 @@ export const MOCK_CROPS: Crop[] = [
   },
   {
     id: 'crop-010',
+    farmerId: 'farmer-009',
     name: 'Maize',
     category: 'Grains',
     pricePerUnit: 210,

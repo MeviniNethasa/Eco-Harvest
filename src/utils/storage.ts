@@ -27,6 +27,7 @@ import {
   UnavailableListItem,
   VerificationRequest,
 } from '../types';
+import { MOCK_CROPS, MOCK_FARMERS } from '../data/mockData';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
@@ -394,6 +395,97 @@ export async function clearFarmerProfile(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Farmer-First: browsable farm directory
+// ---------------------------------------------------------------------------
+// `MOCK_FARMERS` is static demo data (there's no per-farmer AsyncStorage
+// record for "other people's farms" the way `FARMER_PROFILE_STORAGE_KEY`
+// holds the current device's own on-device profile), so these two helpers
+// stay simple reads/filters over that directory rather than a full
+// AsyncStorage-backed CRUD layer like `getCrops`/`saveCrops` above.
+
+/**
+ * All registered farmer profiles shown on the Farmer-First marketplace
+ * (farm directory / "Browse Farms" screen).
+ *
+ * Previously this only returned `MOCK_FARMERS`, so a farmer who completed
+ * (or edited) Screen M-02 onboarding — persisted separately under
+ * `FARMER_PROFILE_STORAGE_KEY` via `saveFarmerProfile` — never showed up in
+ * the directory no matter how many times Marketplace re-focused. This now
+ * reads that on-device profile too and merges it in: if its id matches an
+ * existing `MOCK_FARMERS` entry (e.g. an admin-verified seed farmer) the
+ * live profile replaces it in place so edits are reflected; otherwise it's
+ * a brand-new farmer and gets prepended so they appear first.
+ *
+ * Async (AsyncStorage-backed `getFarmerProfile` read), unlike the old
+ * synchronous version — callers need `await`.
+ */
+export async function getFarmers(): Promise<FarmerProfile[]> {
+  const onDeviceProfile = await getFarmerProfile();
+  if (!onDeviceProfile) {
+    return [...MOCK_FARMERS];
+  }
+
+  const existingIndex = MOCK_FARMERS.findIndex(
+    (farmer) => farmer.id === onDeviceProfile.id
+  );
+  if (existingIndex >= 0) {
+    return MOCK_FARMERS.map((farmer, i) =>
+      i === existingIndex ? onDeviceProfile : farmer
+    );
+  }
+  return [onDeviceProfile, ...MOCK_FARMERS];
+}
+
+/**
+ * Look up a single farm profile by id (e.g. for a Farm Profile Page header).
+ * Checks the on-device profile first (so a freshly onboarded/edited farmer
+ * resolves correctly even if `MOCK_FARMERS` has no matching entry), then
+ * falls back to the static directory. Returns `null` if no farmer with that
+ * id is registered anywhere.
+ *
+ * Async (AsyncStorage-backed), unlike the old synchronous version —
+ * callers need `await`.
+ */
+export async function getFarmerById(farmerId: string): Promise<FarmerProfile | null> {
+  const onDeviceProfile = await getFarmerProfile();
+  if (onDeviceProfile && onDeviceProfile.id === farmerId) {
+    return onDeviceProfile;
+  }
+  return MOCK_FARMERS.find((farmer) => farmer.id === farmerId) ?? null;
+}
+
+/**
+ * Every product/crop listing belonging to a single farm, for the Farm
+ * Profile Page's product grid.
+ *
+ * Previously this treated the live (AsyncStorage-backed) crop catalog and
+ * the static `MOCK_CROPS` seed set as mutually exclusive — falling back to
+ * `MOCK_CROPS` only when the stored catalog was completely empty. That
+ * meant the moment any farmer published their first crop, every seeded
+ * `MOCK_CROPS` listing for every farm silently disappeared, since the
+ * stored catalog was now "non-empty" and took over entirely.
+ *
+ * This now merges the two sources: stored crops (farmer-published listings
+ * and edits) plus any `MOCK_CROPS` entries that aren't already represented
+ * in storage (by id), so seed data and newly published crops coexist. If a
+ * stored crop happens to share an id with a mock one (e.g. an edited seed
+ * listing), the stored version wins. Only then is the merged set filtered
+ * down to this farm's exact `farmerId`.
+ */
+export async function getProductsByFarmerId(farmerId: string): Promise<Crop[]> {
+  const storedCrops = await getCrops();
+  const storedIds = new Set(storedCrops.map((crop) => crop.id));
+  const mockOnly = MOCK_CROPS.filter((crop) => !storedIds.has(crop.id));
+  const merged = [...storedCrops, ...mockOnly];
+  // Compare as trimmed strings rather than `===` so a crop never silently
+  // drops out of its farm's storefront over a stray type/whitespace
+  // mismatch (e.g. a crop.farmerId that round-tripped through storage as
+  // something not strictly identical to the route param string).
+  const targetId = farmerId?.toString().trim();
+  return merged.filter((crop) => crop.farmerId?.toString().trim() === targetId);
+}
+
+// ---------------------------------------------------------------------------
 // Screen A-01: Verification Request Desk (SLSI Certificate Audit)
 // Web-only Desktop Admin Command Panel data layer. Distinct storage key from
 // `FARMER_PROFILE_STORAGE_KEY` above: that key holds the single on-device
@@ -452,36 +544,226 @@ const SAMPLE_SUSPICIOUS_VERIFICATION_REQUEST: VerificationRequest = {
 };
 
 /**
+ * Best-effort mapping onto a farm's `FarmCoordinates`, derived
+ * deterministically from a seed string so the same farmer always lands on
+ * the same pin without a real geocoding integration. Intentionally
+ * self-contained (its own tiny hash) rather than reusing the
+ * delivery-tracking section's `hashString` / `deterministicCoordinate)`,
+ * since those are geared at order routing, not SLSI applications, and
+ * keeping this local avoids a cross-section dependency.
+ */
+function deriveFarmCoordinateFromSeed(seed: string, district: string) {
+  const safeSeed = typeof seed === 'string' && seed.length > 0 ? seed : 'farmer-seed';
+  let hash = 0;
+  for (let i = 0; i < safeSeed.length; i++) {
+    hash = (hash * 31 + safeSeed.charCodeAt(i)) >>> 0;
+  }
+  const latOffset = ((hash % 1000) / 1000 - 0.5) * 2; // Sri Lanka spans ~+/-1 deg lat
+  const lngOffset = (((hash >>> 10) % 1000) / 1000 - 0.5) * 2;
+  return {
+    latitude: 7.8731 + latOffset, // Sri Lanka's approximate geographic center
+    longitude: 80.7718 + lngOffset,
+    district: district || 'Unknown',
+  };
+}
+
+/**
+ * Builds a `VerificationRequest` from the single on-device `FarmerProfile`
+ * (Screen M-02), so a farmer's real SLSI submission can be pushed into the
+ * Screen A-01 admin queue — the bridge in the *opposite* direction from
+ * `updateVerificationStatus`'s "Farmer Portal Sync" above.
+ *
+ * Fields that only exist on `VerificationRequest` (business registration
+ * number, GPS coordinates) don't have a `FarmerProfile` equivalent yet, so
+ * they're filled with a stable, clearly-labeled placeholder / a
+ * deterministic mock coordinate rather than left blank.
+ */
+export function buildVerificationRequestFromProfile(
+  profile: FarmerProfile
+): VerificationRequest {
+  return {
+    farmerId: profile.id,
+    legalName: profile.legalName,
+    businessRegistrationNo: `SELF-REG-${profile.id.slice(-8).toUpperCase()}`,
+    mobileNumber: profile.mobileNumber,
+    bankDetails: { ...profile.bankDetails },
+    farmCoordinates: deriveFarmCoordinateFromSeed(profile.id, profile.district),
+    slsiCertificateUrl: profile.slsiCertificateUri ?? '',
+    verificationStatus:
+      profile.verificationStatus === 'VERIFIED'
+        ? 'VERIFIED'
+        : profile.verificationStatus === 'REJECTED'
+        ? 'REJECTED'
+        : 'PENDING',
+    commissionRate: profile.commissionRate ?? COMMISSION_RATE_DEFAULT,
+    submittedAt: new Date().toISOString(),
+  };
+}
+
+/**
  * Initial pending queue seeded into AsyncStorage the first time
  * `getVerificationRequests` is ever called on a fresh install, so the
  * Verification Request Desk never opens empty (design.md: "Seed sample
  * pending SLSI verification requests if none exist").
+ *
+ * Before falling back to the two static samples, this checks whether the
+ * on-device `FarmerProfile` already has a real `PENDING_VERIFICATION`
+ * submission sitting in storage (e.g. a farmer submitted before the admin
+ * ever opened Screen A-01) and, if so, prepends it — so a real submission
+ * is never invisible just because it happened to be the very first thing
+ * to touch this storage key.
  */
-function buildInitialVerificationRequests(): VerificationRequest[] {
-  return [SAMPLE_VALID_VERIFICATION_REQUEST, SAMPLE_SUSPICIOUS_VERIFICATION_REQUEST];
+async function buildInitialVerificationRequests(): Promise<VerificationRequest[]> {
+  const samples = [SAMPLE_VALID_VERIFICATION_REQUEST, SAMPLE_SUSPICIOUS_VERIFICATION_REQUEST];
+
+  try {
+    const profile = await getFarmerProfile();
+    if (profile && profile.verificationStatus === 'PENDING_VERIFICATION') {
+      const realRequest = buildVerificationRequestFromProfile(profile);
+      return [realRequest, ...samples];
+    }
+  } catch (error) {
+    console.error(
+      'Failed to check for an existing farmer submission while seeding verification requests:',
+      error
+    );
+  }
+
+  return samples;
 }
 
 /**
  * Simple pub/sub (same pattern as cart/crops/orders/notifications above) so
  * the Admin Command Panel's queue view can react immediately to an
  * approve/reject override without a global state library.
+ *
+ * NOTE — this only reaches listeners registered in the *same* JS runtime.
+ * That's fine for changes made from inside this same tab/bundle, but
+ * `AdminVerificationDeskScreen` is explicitly a separate top-level web
+ * route/tab from `FarmerOnboardingScreen` (see its ARCHITECTURE NOTE), so a
+ * farmer submitting from one browser tab runs in a completely different JS
+ * module instance than the admin's tab — this `Set` is simply empty there.
+ * See `subscribeToVerificationQueueAcrossTabs` below for the mechanism that
+ * actually crosses tabs.
  */
 type VerificationRequestListener = (requests: VerificationRequest[]) => void;
 const verificationRequestListeners = new Set<VerificationRequestListener>();
 
 function notifyVerificationRequestListeners(requests: VerificationRequest[]): void {
   verificationRequestListeners.forEach((listener) => listener(requests));
+  broadcastVerificationQueueChange();
 }
 
 /**
- * Subscribe to real-time verification-queue updates. Returns an unsubscribe
- * function.
+ * Subscribe to real-time verification-queue updates from *this* tab/bundle.
+ * Returns an unsubscribe function.
  */
 export function subscribeToVerificationRequests(
   listener: VerificationRequestListener
 ): () => void {
   verificationRequestListeners.add(listener);
   return () => verificationRequestListeners.delete(listener);
+}
+
+// ---------------------------------------------------------------------------
+// Cross-tab notification for the verification queue
+// ---------------------------------------------------------------------------
+//
+// A plain `window.dispatchEvent(new Event(...))` — the usual first instinct
+// here — does NOT solve this. DOM events (custom or native) never leave the
+// document/tab that dispatched them; they cannot be observed by a listener
+// registered in a different browser tab, even same-origin ones. Since
+// `AdminVerificationDeskScreen` is meant to be opened as its own tab, we
+// need one of the two browser primitives that are *actually* delivered
+// across tabs:
+//
+//   1. `BroadcastChannel` — an explicit same-origin pub/sub channel. This is
+//      the primary mechanism below: instant, and carries a small payload.
+//   2. The native `storage` event — fires automatically on every *other*
+//      open tab whenever `localStorage` is written (curiously, never on the
+//      tab that wrote it), with zero code needed on the writing side. Kept
+//      as a fallback for environments without `BroadcastChannel` (some
+//      in-app/webview browsers, older Safari).
+//
+// Both are web-only; native (iOS/Android) app code never hits this file's
+// `window` at all, so everything below no-ops safely there.
+const VERIFICATION_QUEUE_CHANNEL_NAME = 'ecoharvest-verification-queue';
+let verificationQueueChannel: BroadcastChannel | null = null;
+let verificationQueueChannelInitAttempted = false;
+
+function getVerificationQueueChannel(): BroadcastChannel | null {
+  if (verificationQueueChannelInitAttempted) return verificationQueueChannel;
+  verificationQueueChannelInitAttempted = true;
+  if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') {
+    return null;
+  }
+  try {
+    verificationQueueChannel = new BroadcastChannel(VERIFICATION_QUEUE_CHANNEL_NAME);
+  } catch (error) {
+    console.warn('BroadcastChannel unavailable for verification queue sync:', error);
+    verificationQueueChannel = null;
+  }
+  return verificationQueueChannel;
+}
+
+/**
+ * Pings any other open tab that the verification queue changed. Never
+ * carries the actual data — subscribers should always re-fetch with
+ * `getVerificationRequests()`, since the `storage`-event fallback path
+ * can't safely carry a structured payload in every environment.
+ */
+function broadcastVerificationQueueChange(): void {
+  const channel = getVerificationQueueChannel();
+  if (!channel) return;
+  try {
+    channel.postMessage({ type: 'verification-queue-changed', at: Date.now() });
+  } catch (error) {
+    console.warn('Failed to broadcast verification queue change:', error);
+  }
+}
+
+/**
+ * Subscribe to verification-queue changes made from *another* browser tab —
+ * e.g. a farmer submitting from the onboarding tab while the admin has the
+ * Verification Desk open in a separate tab. Combines `BroadcastChannel`
+ * (primary) with the native `storage` event (fallback) so callers don't
+ * need to know about either mechanism. The callback only signals that
+ * *something* changed; call `getVerificationRequests()` to get the fresh
+ * data, the same way the window-focus listener already does.
+ *
+ * Never fires for a change made in the same tab that called it — pair this
+ * with `subscribeToVerificationRequests` above for that case. No-ops safely
+ * on native (iOS/Android) or during SSR.
+ */
+export function subscribeToVerificationQueueAcrossTabs(
+  onRemoteChange: () => void
+): () => void {
+  if (typeof window === 'undefined') {
+    return () => {};
+  }
+
+  const channel = getVerificationQueueChannel();
+  const handleChannelMessage = (event: MessageEvent) => {
+    if (event?.data?.type === 'verification-queue-changed') {
+      onRemoteChange();
+    }
+  };
+  channel?.addEventListener('message', handleChannelMessage);
+
+  const handleStorageEvent = (event: StorageEvent) => {
+    // `event.key` is `null` when a tab clears storage entirely; otherwise
+    // only react to our specific key so unrelated writes (cart, crops,
+    // notifications, etc.) don't trigger pointless verification refetches.
+    if (event.key === null || event.key === VERIFICATION_REQUESTS_STORAGE_KEY) {
+      onRemoteChange();
+    }
+  };
+  window.addEventListener('storage', handleStorageEvent);
+
+  return () => {
+    channel?.removeEventListener('message', handleChannelMessage);
+    window.removeEventListener('storage', handleStorageEvent);
+  };
 }
 
 /**
@@ -495,7 +777,7 @@ export async function getVerificationRequests(): Promise<VerificationRequest[]> 
     if (raw) {
       return JSON.parse(raw) as VerificationRequest[];
     }
-    const seeded = buildInitialVerificationRequests();
+    const seeded = await buildInitialVerificationRequests();
     await AsyncStorage.setItem(VERIFICATION_REQUESTS_STORAGE_KEY, JSON.stringify(seeded));
     return seeded;
   } catch (error) {
@@ -537,13 +819,44 @@ export async function upsertVerificationRequest(
   request: VerificationRequest
 ): Promise<VerificationRequest[]> {
   const all = await getVerificationRequests();
-  const existingIndex = all.findIndex((r) => r.farmerId === request.farmerId);
+  // Match on farmerId first (the primary key), falling back to
+  // mobileNumber — this covers the case where a farmer's on-device id
+  // changed (e.g. profile was reset and re-onboarded) but their phone
+  // number is still the unique real-world identifier for the same
+  // applicant, so a re-submission updates their existing row instead of
+  // creating a duplicate queue entry.
+  const existingIndex = all.findIndex(
+    (r) =>
+      r.farmerId === request.farmerId ||
+      (!!request.mobileNumber && r.mobileNumber === request.mobileNumber)
+  );
   const updated =
     existingIndex >= 0
       ? all.map((r, i) => (i === existingIndex ? request : r))
       : [request, ...all];
   await saveVerificationRequests(updated);
   return updated;
+}
+
+/**
+ * Convenience entry point for `FarmerOnboardingScreen`: builds a
+ * `VerificationRequest` from the current `FarmerProfile` via
+ * `buildVerificationRequestFromProfile` and immediately upserts it into
+ * the `@ecoharvest/verification-requests` queue, so an SLSI submission
+ * (or a Developer Sandbox "Set Pending" tap) shows up on the Screen A-01
+ * Admin Verification Desk right away instead of only living in
+ * `@ecoharvest/farmer-profile`.
+ *
+ * No-ops (and never throws) if `profile` is `null`/`undefined`, since
+ * there's nothing to sync before the farmer has completed onboarding at
+ * least once.
+ */
+export async function syncFarmerProfileToVerificationQueue(
+  profile: FarmerProfile | null | undefined
+): Promise<VerificationRequest[] | null> {
+  if (!profile) return null;
+  const request = buildVerificationRequestFromProfile(profile);
+  return upsertVerificationRequest(request);
 }
 
 /**

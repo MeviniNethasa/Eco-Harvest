@@ -11,13 +11,14 @@
 // nested inside it. Nothing in this file assumes React Navigation's mobile
 // tab/stack context.
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Pressable, ScrollView, Image, StyleSheet } from 'react-native';
+import { View, Text, Pressable, ScrollView, Image, StyleSheet, Platform } from 'react-native';
 import { VerificationRequest } from '../types';
 import {
   approveVerificationRequest,
   getSampleVerificationRequests,
   getVerificationRequests,
   rejectVerificationRequest,
+  subscribeToVerificationQueueAcrossTabs,
   subscribeToVerificationRequests,
   upsertVerificationRequest,
 } from '../utils/storage';
@@ -94,6 +95,7 @@ const ProfileRow: React.FC<{ label: string; value: string }> = ({ label, value }
 export default function AdminVerificationDeskScreen() {
   const [queue, setQueue] = useState<VerificationRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedFarmerId, setSelectedFarmerId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -101,8 +103,16 @@ export default function AdminVerificationDeskScreen() {
   const [zoom, setZoom] = useState(1);
   const [rotationDeg, setRotationDeg] = useState(0);
 
-  const loadQueue = useCallback(async () => {
-    setIsLoading(true);
+  // `silent` skips the full-screen "Loading verification requests…" state
+  // — used by the window-focus listener and the manual Refresh Queue
+  // button below, so re-fetching doesn't flash the workspace empty while
+  // the admin is mid-review. The very first mount load still shows it.
+  const loadQueue = useCallback(async (silent: boolean = false) => {
+    if (silent) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
       const requests = await getVerificationRequests();
       setQueue(requests);
@@ -114,7 +124,11 @@ export default function AdminVerificationDeskScreen() {
     } catch (err) {
       console.error('Failed to load verification requests:', err);
     } finally {
-      setIsLoading(false);
+      if (silent) {
+        setIsRefreshing(false);
+      } else {
+        setIsLoading(false);
+      }
     }
   }, []);
 
@@ -123,12 +137,67 @@ export default function AdminVerificationDeskScreen() {
   }, [loadQueue]);
 
   // Stay live while mounted, same pub/sub pattern as the rest of the app,
-  // so an override applied from this screen (or, in a multi-admin setup, a
-  // future second admin session) reflects immediately.
+  // so an override applied from *this* tab (e.g. Approve/Reject below, or
+  // the Dev Sandbox buttons) reflects immediately. This only covers
+  // same-tab changes — see the cross-tab subscription right below it for
+  // the actual farmer-submits-from-another-tab case.
   useEffect(() => {
     const unsubscribe = subscribeToVerificationRequests(setQueue);
     return unsubscribe;
   }, []);
+
+  // The real-time bridge for the bug this screen exists to fix: a farmer
+  // submitting (or changing) their onboarding profile from a *different*
+  // browser tab than this one. `subscribeToVerificationRequests` above
+  // can't see that write — it's a different JS module instance — so this
+  // uses BroadcastChannel/the native `storage` event under the hood (see
+  // `subscribeToVerificationQueueAcrossTabs` in storage.ts) to react the
+  // instant another tab's queue write lands, no manual refresh needed.
+  // Silent refresh, same as the focus/visibility listeners below, so the
+  // workspace doesn't flash empty mid-review.
+  useEffect(() => {
+    const unsubscribe = subscribeToVerificationQueueAcrossTabs(() => {
+      loadQueue(true);
+    });
+    return unsubscribe;
+  }, [loadQueue]);
+
+  // This screen is intentionally a standalone web route rather than a
+  // React Navigation stack/tab screen (see the ARCHITECTURE NOTE at the
+  // top of this file), so `useFocusEffect` isn't available here — there's
+  // no navigator to report focus events. Window focus/visibility are kept
+  // as a belt-and-suspenders fallback alongside the cross-tab subscription
+  // above (e.g. covers a tab that was frozen/backgrounded long enough that
+  // the browser deferred delivering the BroadcastChannel message until it
+  // regains focus).
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const handleWindowFocus = () => {
+      loadQueue(true);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadQueue(true);
+      }
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', handleWindowFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [loadQueue]);
+
+  // Backs the sidebar's "[ 🔄 Refresh Queue ]" button — lets the admin
+  // manually re-fetch the queue on demand rather than only relying on the
+  // window-focus listener above (e.g. if the browser tab never lost
+  // focus, or the admin just wants to be sure they're looking at the
+  // latest state).
+  const handleManualRefresh = () => {
+    loadQueue(true);
+  };
 
   const selectedRequest =
     queue.find((r) => r.farmerId === selectedFarmerId) ?? null;
@@ -232,12 +301,29 @@ export default function AdminVerificationDeskScreen() {
           );
         })}
 
-        {pendingQueue.length > 0 && (
-          <View style={styles.sidebarQueue}>
+        <View style={styles.sidebarQueue}>
+          <View style={styles.sidebarQueueHeaderRow}>
             <Text style={styles.sidebarQueueLabel}>
               PENDING QUEUE ({pendingQueue.length})
             </Text>
-            {pendingQueue.map((r) => (
+            <Pressable
+              style={styles.sidebarRefreshButton}
+              onPress={handleManualRefresh}
+              disabled={isRefreshing}
+              hitSlop={6}
+            >
+              <Text style={styles.sidebarRefreshButtonText}>
+                {isRefreshing ? '🔄 …' : '🔄 Refresh Queue'}
+              </Text>
+            </Pressable>
+          </View>
+
+          {pendingQueue.length === 0 ? (
+            <Text style={styles.sidebarQueueEmptyText}>
+              No pending applications right now.
+            </Text>
+          ) : (
+            pendingQueue.map((r) => (
               <Pressable
                 key={r.farmerId}
                 style={[
@@ -250,9 +336,9 @@ export default function AdminVerificationDeskScreen() {
                   {r.legalName}
                 </Text>
               </Pressable>
-            ))}
-          </View>
-        )}
+            ))
+          )}
+        </View>
       </View>
 
       {/* ---------------- Main Desktop Workspace ---------------- */}
@@ -504,12 +590,36 @@ const styles = StyleSheet.create({
     borderTopColor: '#334155',
     paddingTop: 16,
   },
+  sidebarQueueHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    gap: 6,
+  },
   sidebarQueueLabel: {
     color: '#64748B',
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 0.5,
-    marginBottom: 8,
+  },
+  sidebarRefreshButton: {
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#334155',
+    backgroundColor: '#0F172A',
+  },
+  sidebarRefreshButtonText: {
+    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  sidebarQueueEmptyText: {
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 16,
   },
   sidebarQueueItem: {
     paddingVertical: 8,

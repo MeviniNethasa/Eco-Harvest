@@ -2,8 +2,25 @@
 
 export type CropCategory = 'Vegetables' | 'Fruits' | 'Grains' | 'Spices';
 
+// The Farmer-First redesign talks about "Products" (a farm's listings)
+// rather than a flat crop catalog. `Product` is a plain alias for `Crop` —
+// same shape, same storage.ts helpers — so new farm-profile screens can use
+// the more natural name without a parallel type or a data migration.
+export type Product = Crop;
+
 export interface Crop {
   id: string;
+  // Join key back to `FarmerProfile.id` — the source of truth for the
+  // Farmer-First marketplace (farm profile pages, `getProductsByFarmerId`
+  // in storage.ts). `farmName`/`province`/`district`/`city` below stay as
+  // denormalized fields (cart/order screens read them without a farmer
+  // lookup), but `farmerId` is what links a listing to its actual farm.
+  // Optional (rather than required) so it doesn't break existing call
+  // sites that predate the Farmer-First model — e.g. storage.ts's
+  // `DEMO_VERIFIED_CROP_POOL`, which represents sandbox listings with no
+  // real registered farm behind them. All `MOCK_CROPS` entries and any
+  // newly published crop should always set it.
+  farmerId?: string;
   name: string;
   category: CropCategory;
   pricePerUnit: number; // LKR
@@ -84,6 +101,15 @@ export interface FarmerProfile {
   verificationStatus: VerificationStatus;
   isSLSIVerified: boolean;
   commissionRate?: number;
+  // ---- Farmer-First public profile fields (farm profile page header) ----
+  // Hero/banner image for the farm's public profile page. Optional because
+  // on-device profiles created before this field existed (and any farmer
+  // who hasn't uploaded a cover yet) won't have one — screens should fall
+  // back to a placeholder image rather than assume it's set.
+  farmCoverPhotoUrl?: string;
+  // Short "About this farm" blurb shown under the cover photo. Optional for
+  // the same reason as `farmCoverPhotoUrl`.
+  description?: string;
 }
 
 export interface CartItem {
@@ -502,6 +528,15 @@ export type RootTabParamList = {
   // dashboard (FarmerOnboardingScreen) passes `'FARMER'` when a farmer taps
   // "Reply to Customer" on an inbound inquiry.
   Chat: { threadId?: string; recipientName?: string; userRole?: 'CUSTOMER' | 'FARMER' };
+};
+
+// Marketplace tab is its own stack (same pattern as Cart/Orders/Profile
+// below) so the Farmer-First farm directory (MarketplaceScreen) can push
+// into a single farm's storefront (FarmerDetailScreen) when a Farm Card is
+// tapped, keyed by the farmer's id.
+export type MarketplaceStackParamList = {
+  MarketplaceHome: undefined;
+  FarmerDetailScreen: { farmerId: string; farmName: string };
 };
 
 // Cart tab is its own stack so Screen M-03 (cart/checkout) can push into
