@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 from PIL import Image
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -103,7 +103,6 @@ async def lifespan(app: FastAPI):
     print(f"💻 Compute Hardware: {device.upper()} ({dtype})")
     print("=============================================")
     load_freshness_model()
-    # Note: OCR model can be loaded lazily or in background to keep startup instant
     yield
     print("🛑 EcoHarvest AI Service shutting down.")
 
@@ -136,7 +135,6 @@ def evaluate_image_freshness_cv(image: Image.Image) -> Dict:
             conf = float(predictions[class_idx]) * 100.0
             predicted_label = CLASS_MAPPING.get(class_idx, "Fresh")
 
-            # Map predicted class to 0-100% freshness rating
             if predicted_label == "Fresh":
                 freshness_pct = min(100, int(85 + (conf / 100) * 14))
             elif predicted_label == "Slightly_Aged":
@@ -163,7 +161,6 @@ def evaluate_image_freshness_cv(image: Image.Image) -> Dict:
     b_mean = np.mean(img_arr[:, :, 2])
     variance = float(np.var(img_arr))
 
-    # Fresh produce exhibits higher green/vibrant spectrum balance and low browning
     browning_ratio = float((r_mean + 0.1) / (g_mean + 0.1))
     if browning_ratio < 1.15:
         state = "Fresh"
@@ -206,8 +203,9 @@ def parse_grocery_items(text: str) -> List[Dict]:
                 re.match(r"^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:kg|g|units?)?$", line, re.IGNORECASE)
 
         if match:
-            qty = float(match.group(1) if match.group(1).replace(".", "").isdigit() else match.group(2))
-            crop = (match.group(2) if match.group(1).replace(".", "").isdigit() else match.group(1)).strip()
+            v1 = match.group(1).replace(".", "")
+            qty = float(match.group(1)) if v1.isdigit() else float(match.group(2))
+            crop = (match.group(2) if v1.isdigit() else match.group(1)).strip()
         else:
             qty = 10.0
             crop = line
@@ -231,6 +229,12 @@ class FreshnessRequest(BaseModel):
     cropName: Optional[str] = "Organic Produce"
 
 
+class OcrRequest(BaseModel):
+    imageBase64: Optional[str] = None
+    imageUri: Optional[str] = None
+    text: Optional[str] = None
+
+
 @app.get("/health")
 async def health():
     return {
@@ -246,24 +250,32 @@ async def health():
 
 @app.post("/assess-freshness")
 async def assess_freshness(
+    request: Request,
     file: Optional[UploadFile] = File(None),
-    payload: Optional[FreshnessRequest] = None,
 ):
     try:
         image = None
+        crop_title = "Organic Crop"
+
         if file is not None:
             raw = await file.read()
             image = Image.open(io.BytesIO(raw))
-        elif payload and payload.imageBase64:
-            import base64
-            img_data = base64.b64decode(payload.imageBase64.split(",")[-1])
-            image = Image.open(io.BytesIO(img_data))
         else:
-            # Fallback demonstration image
+            try:
+                body = await request.json()
+                if body.get("cropName"):
+                    crop_title = body["cropName"]
+                if body.get("imageBase64"):
+                    import base64
+                    img_data = base64.b64decode(body["imageBase64"].split(",")[-1])
+                    image = Image.open(io.BytesIO(img_data))
+            except Exception:
+                pass
+
+        if image is None:
             image = Image.new("RGB", (128, 128), color=(40, 160, 60))
 
         result = evaluate_image_freshness_cv(image)
-        crop_title = (payload.cropName if payload else None) or "Organic Crop"
         result["cropName"] = crop_title
 
         return {
@@ -278,10 +290,20 @@ async def assess_freshness(
 @app.post("/extract-handwriting")
 @app.post("/extract-handwritten-list")
 async def extract_handwriting(
+    request: Request,
     file: Optional[UploadFile] = File(None),
 ):
     try:
         raw_text = "40kg Carrot\n15kg Beetroot\n60kg Pumpkin\n25kg Leek"
+
+        # Check if text or base64 was passed in JSON body
+        try:
+            body = await request.json()
+            if body.get("text"):
+                raw_text = body["text"]
+        except Exception:
+            pass
+
         if file is not None and ocr_model is not None and ocr_processor is not None:
             raw_bytes = await file.read()
             image = Image.open(io.BytesIO(raw_bytes)).convert("RGB")

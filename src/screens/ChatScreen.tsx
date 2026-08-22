@@ -46,12 +46,6 @@ interface ThreadWithPreview {
   lastMessage: ChatMessage | null;
 }
 
-const SANDBOX_PRESETS = [
-  { label: '[ Test Normal Msg ]', text: 'When will the 100kg carrots be dispatched?' },
-  { label: '[ Test Phone Block ]', text: 'Call me on 0771234567 to deal directly' },
-  { label: '[ Test Email Block ]', text: 'Send receipt to farmer@gmail.com' },
-] as const;
-
 function formatTimestamp(iso: string): string {
   try {
     const date = new Date(iso);
@@ -201,14 +195,6 @@ export default function ChatScreen() {
     },
     [draft, isSending, selectedThreadId, currentUserRole, loadThreadsList]
   );
-
-  const handleSandboxPreset = useCallback((presetText: string) => {
-    setDraft(presetText);
-  }, []);
-
-  const handleSwitchRole = useCallback(() => {
-    setCurrentUserRole((prev) => (prev === 'FARMER' ? 'CUSTOMER' : 'FARMER'));
-  }, []);
 
   const paymentStatusStyle = useMemo(() => {
     if (!thread) return styles.paymentPillNeutral;
@@ -467,29 +453,6 @@ export default function ChatScreen() {
               <Ionicons name="send" size={16} color="#FFFFFF" />
             )}
           </Pressable>
-        </View>
-
-        {/* Developer Sandbox Toolbar */}
-        <View style={styles.sandboxToolbar}>
-          <View style={styles.sandboxHeaderRow}>
-            <Text style={styles.sandboxLabel}>DEV SANDBOX ({currentUserRole} VIEW)</Text>
-            <Pressable onPress={handleSwitchRole} style={styles.switchRoleButton}>
-              <Text style={styles.switchRoleButtonText}>
-                Switch to {currentUserRole === 'FARMER' ? 'CUSTOMER' : 'FARMER'}
-              </Text>
-            </Pressable>
-          </View>
-          <View style={styles.sandboxButtonRow}>
-            {SANDBOX_PRESETS.map((preset) => (
-              <Pressable
-                key={preset.label}
-                style={styles.sandboxButton}
-                onPress={() => handleSandboxPreset(preset.text)}
-              >
-                <Text style={styles.sandboxButtonText}>{preset.label}</Text>
-              </Pressable>
-            ))}
-          </View>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -782,52 +745,5 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: '#9CA3AF',
-  },
-  sandboxToolbar: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#F8FAFC',
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-  },
-  sandboxHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  sandboxLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  switchRoleButton: {
-    backgroundColor: '#0F172A',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  switchRoleButtonText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  sandboxButtonRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  sandboxButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  sandboxButtonText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#15803D',
   },
 });

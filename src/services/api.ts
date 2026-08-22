@@ -38,11 +38,21 @@ export const authApi = {
     district?: string;
     province?: string;
     subscriptionPlan?: 'STANDARD' | 'BULK_ACCESS';
+    isBulkBuyer?: boolean;
+    bulkAccessPlan?: string;
     password?: string;
+    isNewRegistration?: boolean;
+    userId?: string;
   }) => request<{ success: boolean; message: string; data: any }>('/auth/register', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
+
+  checkPhone: (phoneNumber: string) =>
+    request<{ success: boolean; isRegistered: boolean; message: string }>('/auth/check-phone', {
+      method: 'POST',
+      body: JSON.stringify({ phoneNumber }),
+    }),
 
   login: (payload: { phoneNumber: string; password?: string }) =>
     request<{ success: boolean; message: string; data: any }>('/auth/login', {
@@ -283,4 +293,56 @@ export const aiApi = {
   getHealth: () =>
     request<{ success: boolean; service: string; pythonServiceStatus: string }>('/ai/health'),
 };
+
+// ---------------------------------------------------------------------------
+// Phase 3 Desktop Admin Command Panel API
+// ---------------------------------------------------------------------------
+export const adminApi = {
+  // Screen A-01: SLSI Verification Desk
+  getVerifications: () =>
+    request<{ success: boolean; count: number; data: any[] }>('/admin/verifications'),
+
+  approveVerification: (id: string, commissionRate: number = 2.5) =>
+    request<{ success: boolean; message: string; data: any }>(`/admin/verifications/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ commissionRate }),
+    }),
+
+  rejectVerification: (id: string, reason?: string) =>
+    request<{ success: boolean; message: string; data: any }>(`/admin/verifications/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  // Screen A-02: Moderated Chat Interception Feed
+  getModeratedChats: () =>
+    request<{ success: boolean; count: number; data: any[] }>('/admin/moderation/chats'),
+
+  overrideModeration: (ticketId: string, action: 'ALLOW' | 'BLOCK' | 'SUSPEND') =>
+    request<{ success: boolean; message: string; ticket: any }>('/admin/moderation/override', {
+      method: 'POST',
+      body: JSON.stringify({ ticketId, action }),
+    }),
+
+  // Screen A-03: Escrow Ledger & Uber Logistics
+  getEscrowLedger: () =>
+    request<{ success: boolean; count: number; data: any[] }>('/admin/escrow/ledger'),
+
+  forceReleaseEscrow: (masterPaymentIntentId: string, reason?: string) =>
+    request<{ success: boolean; message: string; data: any }>('/admin/escrow/force-release', {
+      method: 'POST',
+      body: JSON.stringify({ masterPaymentIntentId, reason }),
+    }),
+
+  refundEscrow: (masterPaymentIntentId: string, reason?: string) =>
+    request<{ success: boolean; message: string; data: any }>('/admin/escrow/refund', {
+      method: 'POST',
+      body: JSON.stringify({ masterPaymentIntentId, reason }),
+    }),
+
+  // Screen A-04: Ecosystem Analytics & Health
+  getAnalyticsHealth: () =>
+    request<{ success: boolean; data: any }>('/admin/analytics/health'),
+};
+
 

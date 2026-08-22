@@ -34,9 +34,13 @@ const MessageSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isFlagged: {
+      type: Boolean,
+      default: false,
+    },
     moderationStatus: {
       type: String,
-      enum: ['PASSED', 'FLAGGED', 'BLOCKED'],
+      enum: ['PASSED', 'FLAGGED', 'BLOCKED', 'INTERCEPTED', 'RELEASED', 'MERCHANT_SUSPENDED'],
       default: 'PASSED',
     },
     timestamp: {

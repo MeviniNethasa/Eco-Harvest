@@ -47,6 +47,14 @@ const UserSchema = new mongoose.Schema(
       enum: ['STANDARD', 'BULK_ACCESS'],
       default: 'STANDARD',
     },
+    isBulkBuyer: {
+      type: Boolean,
+      default: false,
+    },
+    bulkAccessPlan: {
+      type: String,
+      default: 'STANDARD',
+    },
     favoriteFarmerIds: [
       {
         type: String,

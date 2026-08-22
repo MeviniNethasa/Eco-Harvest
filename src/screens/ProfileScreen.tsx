@@ -335,14 +335,9 @@ export default function ProfileScreen() {
         createdAt: customerProfile?.createdAt ?? new Date().toISOString(),
       };
 
-      const saved = await saveUserProfile(profileToSave);
-      setCustomerProfile(saved);
-      setIsRegisterModalVisible(false);
-      setIsStripeModalVisible(false);
-
-      // Async sync to backend API in background
-      authApi
-        .register({
+      // Sync to backend API
+      try {
+        await authApi.register({
           fullName: profileToSave.fullName,
           phoneNumber: profileToSave.phoneNumber,
           role: 'CUSTOMER',
@@ -350,8 +345,32 @@ export default function ProfileScreen() {
           district: profileToSave.district,
           province: customerProvince || '',
           subscriptionPlan: planToSave,
-        })
-        .catch((err) => console.log('Backend sync notice (offline mode active):', err.message));
+          isBulkBuyer: planToSave === 'BULK_ACCESS',
+          bulkAccessPlan: planToSave,
+          isNewRegistration: !customerProfile,
+          userId: customerProfile?.id,
+        });
+      } catch (apiErr: any) {
+        const msg = apiErr?.message || '';
+        if (
+          msg.includes('already registered') ||
+          msg.includes('duplicate') ||
+          apiErr?.errorType === 'DUPLICATE_PHONE'
+        ) {
+          Alert.alert(
+            'Phone Number Registered',
+            'This phone number is already registered. Please log in or use a different number.'
+          );
+          setIsSaving(false);
+          return;
+        }
+        console.log('Backend sync notice (offline mode active):', msg);
+      }
+
+      const saved = await saveUserProfile(profileToSave);
+      setCustomerProfile(saved);
+      setIsRegisterModalVisible(false);
+      setIsStripeModalVisible(false);
 
       if (planToSave === 'BULK_ACCESS') {
         stripeApi
@@ -686,7 +705,7 @@ export default function ProfileScreen() {
 
             <Pressable
               style={styles.choiceCard}
-              onPress={openRegisterModal}
+              onPress={() => navigation.navigate('RegisterCustomer')}
               accessibilityRole="button"
               accessibilityLabel="Register as Customer"
             >

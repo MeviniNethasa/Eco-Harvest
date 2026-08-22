@@ -36,6 +36,7 @@ import MyProductsScreen from '../screens/MyProductsScreen';
 import AddProductScreen from '../screens/AddProductScreen';
 import FarmerOrdersScreen from '../screens/FarmerOrdersScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import RegisterCustomerScreen from '../screens/RegisterCustomerScreen';
 
 // Typed against the union of both bars' route names (see
 // `CombinedTabParamList` in src/types/index.ts) so a single navigator
@@ -51,6 +52,7 @@ const Tab = createBottomTabNavigator<CombinedTabParamList>();
 export type ProfileStackParamList = {
   ProfileHome: undefined;
   FarmerOnboarding: undefined;
+  RegisterCustomer: undefined;
 };
 const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
 
@@ -149,6 +151,11 @@ function ProfileStackNavigator() {
         name="FarmerOnboarding"
         component={FarmerOnboardingScreen}
         options={{ title: 'Farmer Portal', headerShown: true }}
+      />
+      <ProfileStack.Screen
+        name="RegisterCustomer"
+        component={RegisterCustomerScreen}
+        options={{ title: 'Customer Registration', headerShown: true }}
       />
     </ProfileStack.Navigator>
   );

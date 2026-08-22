@@ -30,6 +30,7 @@ import {
   VerificationRequest,
 } from '../types';
 import { MOCK_CROPS, MOCK_FARMERS } from '../data/mockData';
+import { messageApi } from '../services/api';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
@@ -2503,6 +2504,17 @@ export async function sendChatMessage(
   const updated = { ...all, [threadId]: [...threadMessages, message] };
 
   await saveAllChatMessages(updated, threadId);
+
+  // Sync to MongoDB backend for live Admin Moderation interception
+  messageApi
+    .sendMessage({
+      conversationId: threadId,
+      senderId: message.senderId,
+      senderRole: senderRole,
+      text: trimmed,
+    })
+    .catch((err) => console.log('Chat backend message sync notice (offline mode active):', err.message));
+
   return message;
 }
 

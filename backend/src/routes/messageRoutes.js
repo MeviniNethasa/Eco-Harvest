@@ -3,11 +3,12 @@ const express = require('express');
 const router = express.Router();
 const Message = require('../models/Message');
 
-// Filter helper for phone numbers / emails to detect off-platform violations
+// Filter helper for phone numbers / emails / direct off-platform keywords to detect violations
 function checkOffPlatformViolation(text) {
   const phonePattern = /(?:0|\+94)\s*\d{2}\s*\d{3}\s*\d{4}|\b\d{10}\b/;
   const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
-  return phonePattern.test(text) || emailPattern.test(text);
+  const offPlatformKeywords = /(?:whatsapp|viber|telegram|bank account|direct pay|transfer cash|cash directly|skip.*commission|commercial bank|bank transfer)/i;
+  return phonePattern.test(text) || emailPattern.test(text) || offPlatformKeywords.test(text);
 }
 
 // GET /api/messages/:conversationId (Get all messages for a thread)
@@ -45,6 +46,7 @@ router.post('/', async (req, res) => {
       senderRole: senderRole || 'CUSTOMER',
       text,
       isBlocked: hasViolation,
+      isFlagged: hasViolation,
       moderationStatus: hasViolation ? 'BLOCKED' : 'PASSED',
       timestamp: new Date(),
     });
