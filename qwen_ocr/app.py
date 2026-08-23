@@ -51,12 +51,15 @@ def parse_items_from_text(text):
         line = line.strip()
         if not line:
             continue
-        cleaned = re.sub(r"^[\-\*\u2022\d\.\)]+\s*", "", line).strip()
+        # Strip list prefixes like "1. ", "10. ", "- ", "• ", "1) "
+        cleaned = re.sub(r"^\s*(?:[\-\*\u2022]|\d+[\.\)\:\-]?)\s*", "", line).strip()
         if not cleaned:
-            continue
+            # If line was purely numeric or bullet point, fallback to line
+            cleaned = line
 
-        match = re.match(r"^(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?)?\s+(.+)$", cleaned, re.IGNORECASE) or \
-                re.match(r"^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?)?$", cleaned, re.IGNORECASE)
+        # Match formats like: "3 kg of Carrots", "3kg Carrots", "Carrots 3kg", "Carrots 3"
+        match = re.match(r"^(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?|boxes?)?\s*(?:of\s+)?(.+)$", cleaned, re.IGNORECASE) or \
+                re.match(r"^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?|boxes?)?$", cleaned, re.IGNORECASE)
 
         if match:
             v1 = match.group(1).replace(".", "")
@@ -70,8 +73,9 @@ def parse_items_from_text(text):
             qty = 10.0
             crop = cleaned
 
-        # Clean unit prefix from crop name if captured
-        crop = re.sub(r"^(?:kg|g|units?|bundles?|packs?)\s+", "", crop, flags=re.IGNORECASE).strip()
+        # Clean unit prefix or preposition prefix like "of", "kg", "g" from crop name
+        crop = re.sub(r"^(?:of|kg|g|units?|bundles?|packs?|boxes?)\s+", "", crop, flags=re.IGNORECASE).strip()
+        crop = re.sub(r"^[\.\-\:\s]+", "", crop).strip()
 
         items.append({
             "id": f"item_{idx + 1}",
@@ -85,11 +89,10 @@ def parse_items_from_text(text):
         })
     return items
 
-def run_ocr(image_pil, max_size=768):
+def run_ocr(image_pil, max_size=600):
     """
-    Runs Qwen2-VL OCR inference with resolution downsampling and pixel compression hints.
+    Runs Qwen2-VL OCR inference with optimized resolution and patch pixel constraints.
     """
-    # Resize image to a maximum height/width of 768 pixels to reduce CPU processing load significantly
     image_pil.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     print(f"--> Image downsampled to optimized dimensions: {image_pil.size}")
 
@@ -102,18 +105,18 @@ def run_ocr(image_pil, max_size=768):
     }]
     prompt = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-    # Min/Max pixel hints force the inner Qwen patch processing pipeline to stay compressed
+    # Min/Max pixel hints optimize inner patch compression for ultra-fast CPU inference
     inputs = processor(
         text=[prompt], 
         images=[image_pil], 
         min_pixels=256 * 256,
-        max_pixels=768 * 768,
+        max_pixels=512 * 512,
         return_tensors="pt"
     ).to(device)
 
-    print("--> Running optimized local inference on M-Series AMX Core Matrix...")
+    print("--> Running optimized local inference on Apple Silicon AMX Core Matrix...")
     with torch.no_grad():
-        generated_ids = model.generate(**inputs, max_new_tokens=512)
+        generated_ids = model.generate(**inputs, max_new_tokens=256)
 
     output_text = processor.batch_decode(generated_ids, skip_special_tokens=True)
     clean_text = output_text[0].split("assistant\n")[-1].replace("<|im_end|>", "").strip()
@@ -138,7 +141,6 @@ def extract():
             image_file = request.files["file"]
 
         if not image_file:
-            # Check JSON payload for direct text or base64 fallback
             json_data = request.get_json(silent=True) or {}
             raw_text = json_data.get("text", "")
             if not raw_text:

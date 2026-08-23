@@ -10,28 +10,28 @@ const FormData = require('form-data');
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB upload limit
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB upload limit
 });
 
 const PYTHON_OCR_URL = process.env.PYTHON_OCR_URL || 'http://127.0.0.1:5001';
 const PYTHON_AI_BASE_URL = process.env.PYTHON_AI_URL || 'http://127.0.0.1:5002';
-const AI_TIMEOUT_MS = 60000; // 60s timeout for vision model inference
+const AI_TIMEOUT_MS = 180000; // 3-minute timeout to comfortably accommodate CPU vision generation
 
-// Helper to parse lines of text into structured crop list items as fallback
+// Helper to parse lines of text into structured crop list items
 function parseGroceryItems(text) {
   if (!text || typeof text !== 'string') return [];
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
   return lines.map((line, idx) => {
-    const cleaned = line.replace(/^[\-\*\u2022\d\.\)]+\s*/, '').trim();
+    const cleaned = line.replace(/^[\-\*\u2022\d\.\)\:\s]+/, '').trim() || line;
     let qty = 10;
-    let name = cleaned || line;
+    let name = cleaned;
 
-    const m1 = /^(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?)?\s+(.+)$/i.exec(cleaned);
+    const m1 = /^(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?)?\s+(?:of\s+)?(.+)$/i.exec(cleaned);
     const m2 = /^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?)?$/i.exec(cleaned);
 
     if (m1) {
       qty = parseFloat(m1[1]);
-      name = m1[2].replace(/^(?:kg|g|units?|bundles?|packs?)\s+/i, '').trim();
+      name = m1[2].replace(/^(?:of|kg|g|units?|bundles?|packs?)\s+/i, '').trim();
     } else if (m2) {
       qty = parseFloat(m2[2]);
       name = m2[1].trim();
@@ -45,7 +45,7 @@ function parseGroceryItems(text) {
       quantity: qty || 10,
       requestedQtyKg: qty || 10,
       unit: 'kg',
-      confidence: Math.round(92 + Math.random() * 6),
+      confidence: 95,
     };
   });
 }
@@ -69,7 +69,7 @@ router.get('/health', async (req, res) => {
       service: 'Express AI Proxy Bridge',
       pythonOcrStatus: 'offline',
       pythonOcrEndpoint: PYTHON_OCR_URL,
-      message: 'Python Qwen2-VL OCR service on http://127.0.0.1:5001 is offline. Fallback active.',
+      message: 'Python Qwen2-VL OCR service on http://127.0.0.1:5001 is offline.',
     });
   }
 });
@@ -77,42 +77,53 @@ router.get('/health', async (req, res) => {
 // POST /api/ai/extract-handwritten-list
 router.post('/extract-handwritten-list', upload.single('image'), async (req, res) => {
   try {
-    // 1. If an image file is uploaded via multipart/form-data
-    if (req.file) {
-      try {
-        console.log(`[AI Proxy] Received image upload (${req.file.size} bytes), forwarding to ${PYTHON_OCR_URL}/extract...`);
-        const form = new FormData();
-        form.append('image', req.file.buffer, {
-          filename: req.file.originalname || 'handwritten_list.jpg',
-          contentType: req.file.mimetype || 'image/jpeg',
-        });
+    let imageBuffer = req.file?.buffer;
+    let mimeType = req.file?.mimetype || 'image/jpeg';
+    let fileName = req.file?.originalname || 'handwritten_list.jpg';
 
-        const pythonResponse = await axios.post(`${PYTHON_OCR_URL}/extract`, form, {
-          headers: {
-            ...form.getHeaders(),
-          },
-          timeout: AI_TIMEOUT_MS,
-          maxContentLength: Infinity,
-          maxBodyLength: Infinity,
-        });
+    // Decode base64 image if uploaded as JSON payload
+    if (!imageBuffer && req.body?.imageBase64) {
+      const cleanBase64 = req.body.imageBase64.replace(/^data:image\/\w+;base64,/, '');
+      imageBuffer = Buffer.from(cleanBase64, 'base64');
+    }
 
-        if (pythonResponse.data && pythonResponse.data.success) {
-          const items = pythonResponse.data.extracted_items || [];
-          return res.status(200).json({
-            success: true,
-            source: 'qwen2_vl_ocr_microservice',
-            endpoint: `${PYTHON_OCR_URL}/extract`,
-            raw_text: pythonResponse.data.raw_text,
-            extracted_items: items,
-            items: items,
-          });
-        }
-      } catch (ocrErr) {
-        console.warn(`[AI Proxy] Qwen2-VL OCR Microservice error: ${ocrErr.message}`);
+    // 1. Forward image buffer to Python OCR Microservice (Port 5001)
+    if (imageBuffer) {
+      console.log(`[AI Proxy] Processing image (${imageBuffer.length} bytes), forwarding to ${PYTHON_OCR_URL}/extract...`);
+      const form = new FormData();
+      form.append('image', imageBuffer, {
+        filename: fileName,
+        contentType: mimeType,
+      });
+
+      const pythonResponse = await axios.post(`${PYTHON_OCR_URL}/extract`, form, {
+        headers: {
+          ...form.getHeaders(),
+        },
+        timeout: AI_TIMEOUT_MS,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      });
+
+      if (pythonResponse.data && pythonResponse.data.success) {
+        const items = pythonResponse.data.extracted_items || [];
+        return res.status(200).json({
+          success: true,
+          source: 'qwen2_vl_ocr_microservice',
+          endpoint: `${PYTHON_OCR_URL}/extract`,
+          raw_text: pythonResponse.data.raw_text,
+          extracted_items: items,
+          items: items,
+        });
+      } else {
+        return res.status(500).json({
+          success: false,
+          message: pythonResponse.data?.error || 'OCR microservice failed to extract text',
+        });
       }
     }
 
-    // 2. If raw text or JSON was provided in req.body
+    // 2. If raw text was provided in req.body
     const text = req.body?.text || (req.body && typeof req.body === 'string' ? req.body : '');
     if (text) {
       try {
@@ -132,7 +143,6 @@ router.post('/extract-handwritten-list', upload.single('image'), async (req, res
           });
         }
       } catch (e) {
-        // Fallback text parsing
         const items = parseGroceryItems(text);
         return res.status(200).json({
           success: true,
@@ -144,21 +154,18 @@ router.post('/extract-handwritten-list', upload.single('image'), async (req, res
       }
     }
 
-    // 3. Fallback sample items if no image/text reached the OCR engine
-    const fallbackText = '40kg Carrot\n15kg Beetroot\n60kg Pumpkin\n25kg Leek';
-    const fallbackItems = parseGroceryItems(fallbackText);
-    return res.status(200).json({
-      success: true,
-      source: 'qwen2_vl_sample_fallback',
-      raw_text: fallbackText,
-      extracted_items: fallbackItems,
-      items: fallbackItems,
+    return res.status(400).json({
+      success: false,
+      message: 'No image file or text provided in request payload',
     });
   } catch (error) {
-    console.error('Error in extract-handwritten-list proxy:', error);
-    return res.status(500).json({
+    console.error('[AI Proxy Error]:', error.message);
+    const isConnRefused = error.code === 'ECONNREFUSED';
+    return res.status(502).json({
       success: false,
-      message: error.message || 'Internal server error in OCR proxy',
+      message: isConnRefused
+        ? `Cannot connect to Python OCR microservice on ${PYTHON_OCR_URL}. Please ensure 'python3 qwen_ocr/app.py' is running.`
+        : `OCR processing failed: ${error.message}`,
     });
   }
 });
@@ -168,7 +175,6 @@ router.post('/assess-freshness', async (req, res) => {
   try {
     const { imageUri, imageBase64, cropCategory, cropName } = req.body;
 
-    // 1. Try forwarding to local Python AI service (port 5002) with timeout
     try {
       const response = await axios.post(
         `${PYTHON_AI_BASE_URL}/assess-freshness`,
@@ -188,7 +194,6 @@ router.post('/assess-freshness', async (req, res) => {
       console.warn('[AI Proxy]: Python freshness service notice:', proxyErr.message);
     }
 
-    // 2. Direct evaluation matching EcoHarvest VGG16 5-class schema
     const freshnessScore = Math.floor(88 + Math.random() * 11);
     const isSLSICompliant = freshnessScore >= 80;
 

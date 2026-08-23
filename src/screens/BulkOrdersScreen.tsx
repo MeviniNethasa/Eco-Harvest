@@ -148,7 +148,8 @@ export default function BulkOrdersScreen() {
   };
 
   // --- AI Vision Processing ---
-  const processImageInChat = async (uri: string) => {
+  // --- AI Vision Processing ---
+  const processImageInChat = async (uri: string, base64?: string | null) => {
     // 1. Add User's Image message
     const userMsg: ChatMessage = {
       id: `user_${Date.now()}`,
@@ -163,63 +164,67 @@ export default function BulkOrdersScreen() {
     scrollToBottom();
 
     try {
-      const formData = new FormData();
-      const filename = uri.split('/').pop() || 'handwritten_list.jpg';
-      const match = /\.(\w+)$/.exec(filename);
-      const type = match ? `image/${match[1].toLowerCase()}` : 'image/jpeg';
+      let result;
+      if (base64) {
+        // High-reliability JSON base64 upload (immune to React Native FormDataPart issues)
+        result = await aiApi.extractHandwrittenList({
+          imageBase64: base64,
+          imageUri: uri,
+        });
+      } else {
+        const formData = new FormData();
+        const filename = uri.split('/').pop() || 'handwritten_list.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1].toLowerCase()}` : 'image/jpeg';
+        const cleanUri = Platform.OS === 'ios' ? uri.replace('file://', '') : uri;
 
-      formData.append('image', {
-        uri,
-        name: filename,
-        type,
-      } as any);
+        formData.append('image', {
+          uri: cleanUri,
+          name: filename,
+          type,
+        } as any);
 
-      const result = await aiApi.extractHandwrittenList(formData);
+        result = await aiApi.extractHandwrittenList(formData);
+      }
+
       const extracted =
         result.extracted_items || result.items || result.data?.extracted_items || [];
 
-      const parsedList: ExtractedListItem[] =
-        extracted.length > 0
-          ? extracted.map((item: any) => ({
-              id: item.id || makeItemId(),
-              rawText: item.rawText || `${item.quantity || item.requestedQtyKg || 10}kg ${item.cropName || item.item}`,
-              cropName: item.cropName || item.item || 'Produce',
-              requestedQtyKg: Number(item.requestedQtyKg || item.quantity) || 10,
-              confidence: item.confidence || 95,
-            }))
-          : [
-              { id: makeItemId(), rawText: '40kg Carrot', cropName: 'Carrot', requestedQtyKg: 40, confidence: 96 },
-              { id: makeItemId(), rawText: '15kg Beetroot', cropName: 'Beetroot', requestedQtyKg: 15, confidence: 94 },
-              { id: makeItemId(), rawText: '60kg Pumpkin', cropName: 'Pumpkin', requestedQtyKg: 60, confidence: 98 },
-            ];
+      if (extracted.length > 0) {
+        const parsedList: ExtractedListItem[] = extracted.map((item: any) => ({
+          id: item.id || makeItemId(),
+          rawText: item.rawText || `${item.quantity || item.requestedQtyKg || 10}kg ${item.cropName || item.item}`,
+          cropName: item.cropName || item.item || 'Produce',
+          requestedQtyKg: Number(item.requestedQtyKg || item.quantity) || 10,
+          confidence: item.confidence || 95,
+        }));
 
-      // 2. Add AI Agent's Extraction Card message
-      const agentMsg: ChatMessage = {
-        id: `agent_${Date.now()}`,
-        sender: 'AGENT',
-        timestamp: new Date().toISOString(),
-        text: 'I parsed your handwritten crop requirements with Qwen2-VL OCR. You can adjust the quantities below before matching with verified farms:',
-        isExtractionCard: true,
-        items: parsedList,
-      };
-
-      setMessages((prev) => [...prev, agentMsg]);
-    } catch (err) {
+        // 2. Add AI Agent's Extraction Card message
+        const agentMsg: ChatMessage = {
+          id: `agent_${Date.now()}`,
+          sender: 'AGENT',
+          timestamp: new Date().toISOString(),
+          text: `I parsed ${parsedList.length} handwritten item(s) with Qwen2-VL OCR. You can adjust the quantities or names below before matching with verified farms:`,
+          isExtractionCard: true,
+          items: parsedList,
+        };
+        setMessages((prev) => [...prev, agentMsg]);
+      } else {
+        const agentMsg: ChatMessage = {
+          id: `agent_${Date.now()}`,
+          sender: 'AGENT',
+          timestamp: new Date().toISOString(),
+          text: '⚠️ Could not clearly detect handwritten crop items from this photo. Please try uploading a clearer image or type your items in the chat below.',
+        };
+        setMessages((prev) => [...prev, agentMsg]);
+      }
+    } catch (err: any) {
       console.warn('AI Extraction notice:', err);
-      // Fallback Card
-      const fallbackList: ExtractedListItem[] = [
-        { id: makeItemId(), rawText: '40kg Carrot', cropName: 'Carrot', requestedQtyKg: 40, confidence: 95 },
-        { id: makeItemId(), rawText: '15kg Beetroot', cropName: 'Beetroot', requestedQtyKg: 15, confidence: 92 },
-        { id: makeItemId(), rawText: '60kg Pumpkin', cropName: 'Pumpkin', requestedQtyKg: 60, confidence: 97 },
-      ];
-
       const agentMsg: ChatMessage = {
         id: `agent_${Date.now()}`,
         sender: 'AGENT',
         timestamp: new Date().toISOString(),
-        text: 'Extracted items from your handwritten list via AI vision engine:',
-        isExtractionCard: true,
-        items: fallbackList,
+        text: `⚠️ OCR service note: ${err?.message || 'Could not process image'}. Please ensure the Python microservice is running or type your list below.`,
       };
       setMessages((prev) => [...prev, agentMsg]);
     } finally {
@@ -238,9 +243,11 @@ export default function BulkOrdersScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.8,
+        base64: true,
       });
-      if (!result.canceled && result.assets?.[0]?.uri) {
-        processImageInChat(result.assets[0].uri);
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        processImageInChat(asset.uri, asset.base64);
       }
     } catch (err) {
       console.error('Gallery picker error:', err);
@@ -257,9 +264,11 @@ export default function BulkOrdersScreen() {
       }
       const result = await ImagePicker.launchCameraAsync({
         quality: 0.8,
+        base64: true,
       });
-      if (!result.canceled && result.assets?.[0]?.uri) {
-        processImageInChat(result.assets[0].uri);
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        processImageInChat(asset.uri, asset.base64);
       }
     } catch (err) {
       console.error('Camera capture error:', err);

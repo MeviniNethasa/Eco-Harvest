@@ -1,0 +1,18 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+The image processor of type `Qwen2VLImageProcessor` is now loaded as a fast processor by default, even if the model checkpoint was saved with a slow processor. This is a breaking change and may produce slightly different outputs. To continue using the slow processor, instantiate this class with `use_fast=False`. 
+--> Target Framework Initialized: CPU (Apple Silicon AMX Matrix Engine)
+--> Loading processor and model...
+Loading weights:   0%|          | 0/729 [00:00<?, ?it/s]Loading weights:  64%|██████▍   | 467/729 [00:00<00:00, 4646.77it/s]Loading weights: 100%|██████████| 729/729 [00:00<00:00, 6054.06it/s]
+--> Model loaded successfully in bfloat16
+--> Starting Qwen2-VL OCR Microservice on http://127.0.0.1:5001...
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5001
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [23/Aug/2026 16:17:51] "GET /health HTTP/1.1" 200 -
+127.0.0.1 - - [23/Aug/2026 16:17:56] "GET /health HTTP/1.1" 200 -
+/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/multiprocessing/resource_tracker.py:255: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+Frameworks/Python.framework/Versions/3.12/lib/python3.12/multiprocessing/resource_tracker.py:255: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
