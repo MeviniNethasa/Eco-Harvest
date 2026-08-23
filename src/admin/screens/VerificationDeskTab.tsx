@@ -30,11 +30,13 @@ interface VerificationItem {
   province: string;
   district: string;
   city: string;
-  coordinates: { latitude: number; longitude: number };
+  coordinates: { latitude: number; longitude: number } | null;
   slsiStandardNumber: string;
   certificateIssueDate: string;
   certificateExpiryDate: string;
   certificateDocumentUrl: string;
+  slsiCertificateUrl?: string;
+  documentUrl?: string;
   bankDetails: {
     bankName: string;
     branchCode: string;
@@ -61,12 +63,23 @@ export default function VerificationDeskTab() {
     try {
       setIsLoading(true);
       const res = await adminApi.getVerifications();
-      if (res && res.data) {
-        setQueue(res.data);
-        if (res.data.length > 0 && !selectedId) {
-          setSelectedId(res.data[0].id);
-          setCommissionRate(res.data[0].commissionRate || 2.5);
-        }
+      let list: VerificationItem[] = [];
+      if (Array.isArray(res)) {
+        list = res;
+      } else if (res && Array.isArray((res as any).verifications)) {
+        list = (res as any).verifications;
+      } else if (res && Array.isArray(res.data)) {
+        list = res.data;
+      } else if (res && res.data && Array.isArray((res.data as any).verifications)) {
+        list = (res.data as any).verifications;
+      } else if (res && res.data && Array.isArray((res.data as any).data)) {
+        list = (res.data as any).data;
+      }
+
+      setQueue(list);
+      if (list.length > 0 && (!selectedId || !list.some((item) => item.id === selectedId))) {
+        setSelectedId(list[0].id);
+        setCommissionRate(list[0].commissionRate || 2.5);
       }
     } catch (err) {
       console.warn('Admin verifications load notice:', err);
@@ -215,20 +228,40 @@ export default function VerificationDeskTab() {
 
             {/* Document Canvas */}
             <View style={styles.docCanvas}>
-              <View
-                style={[
-                  styles.imageWrapper,
-                  {
-                    transform: [{ scale: zoomLevel }, { rotate: `${rotationDegrees}deg` }],
-                  },
-                ]}
-              >
-                <Image
-                  source={{ uri: currentItem?.certificateDocumentUrl }}
-                  style={styles.certificateImage}
-                  resizeMode="contain"
-                />
-              </View>
+              {(() => {
+                const certUrl =
+                  currentItem?.slsiCertificateUrl ||
+                  currentItem?.certificateDocumentUrl ||
+                  (currentItem as any)?.documentUrl ||
+                  (currentItem as any)?.certificateUrl;
+
+                return certUrl ? (
+                  <View
+                    style={[
+                      styles.imageWrapper,
+                      {
+                        transform: [{ scale: zoomLevel }, { rotate: `${rotationDegrees}deg` }],
+                      },
+                    ]}
+                  >
+                    <Image
+                      source={{ uri: certUrl }}
+                      style={styles.certificateImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                ) : (
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 }}>
+                    <Ionicons name="document-outline" size={48} color={AdminTheme.colorTextMuted} />
+                    <Text style={{ color: AdminTheme.colorTextMuted, fontSize: 14, marginTop: 12, textAlign: 'center', fontWeight: '600' }}>
+                      No Document Attached
+                    </Text>
+                    <Text style={{ color: AdminTheme.colorTextMuted, fontSize: 12, marginTop: 4, textAlign: 'center' }}>
+                      The farmer has not attached an SLSI certificate document yet.
+                    </Text>
+                  </View>
+                );
+              })()}
             </View>
 
             {/* Certificate Standards Stamp & Hash */}

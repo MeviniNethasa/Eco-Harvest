@@ -32,10 +32,18 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/farmers/:id (Get single farm profile by ID)
+// GET /api/farmers/:id (Get single farm profile by ID, userId, or mobileNumber)
 router.get('/:id', async (req, res) => {
   try {
-    const farmer = await FarmerProfile.findById(req.params.id);
+    const mongoose = require('mongoose');
+    const { id } = req.params;
+    let farmer = null;
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      farmer = await FarmerProfile.findById(id);
+    }
+    if (!farmer) {
+      farmer = await FarmerProfile.findOne({ $or: [{ userId: id }, { mobileNumber: id }, { _id: id }] });
+    }
     if (!farmer) {
       return res.status(404).json({ success: false, message: 'Farm profile not found' });
     }
@@ -58,6 +66,7 @@ router.post('/profile', async (req, res) => {
       description,
       slsiStatus,
       isSLSIVerified,
+      slsiCertificateUrl,
       bankDetails,
       location,
       province,
@@ -103,6 +112,7 @@ router.post('/profile', async (req, res) => {
       farmer.district = loc.district || farmer.district;
       farmer.city = loc.city || farmer.city;
       farmer.farmCoverPhotoUrl = farmCoverPhotoUrl || farmer.farmCoverPhotoUrl;
+      if (slsiCertificateUrl) farmer.slsiCertificateUrl = slsiCertificateUrl;
       farmer.commissionRate = commissionRate || farmer.commissionRate;
       await farmer.save();
     } else {
@@ -120,6 +130,7 @@ router.post('/profile', async (req, res) => {
         district: loc.district || '',
         city: loc.city || '',
         farmCoverPhotoUrl: farmCoverPhotoUrl || '',
+        slsiCertificateUrl: slsiCertificateUrl || null,
         commissionRate: commissionRate || 5.0,
       });
     }

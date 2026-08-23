@@ -250,13 +250,25 @@ export default function RegisterCustomerScreen() {
           .catch((err) => console.log('Stripe sync notice:', err.message));
       }
 
+      const finishNavigation = () => {
+        if (navigation.canGoBack()) {
+          navigation.goBack();
+        } else {
+          (navigation as any).navigate('ProfileHome');
+        }
+      };
+
       Alert.alert(
         'Registration Complete',
         `Welcome to EcoHarvest, ${newProfile.fullName}! ${
           bulkStatus ? 'Bulk Buyer Access is active.' : ''
         }`,
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
+        [{ text: 'OK', onPress: finishNavigation }]
       );
+
+      if (Platform.OS === 'web') {
+        setTimeout(finishNavigation, 400);
+      }
     } catch (err: any) {
       console.error('Registration failed:', err);
       Alert.alert('Registration Failed', 'Could not complete registration. Please try again.');

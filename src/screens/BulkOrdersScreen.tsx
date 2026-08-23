@@ -163,18 +163,29 @@ export default function BulkOrdersScreen() {
     scrollToBottom();
 
     try {
-      const result = await aiApi.extractHandwrittenList({ imageUri: uri });
+      const formData = new FormData();
+      const filename = uri.split('/').pop() || 'handwritten_list.jpg';
+      const match = /\.(\w+)$/.exec(filename);
+      const type = match ? `image/${match[1].toLowerCase()}` : 'image/jpeg';
+
+      formData.append('image', {
+        uri,
+        name: filename,
+        type,
+      } as any);
+
+      const result = await aiApi.extractHandwrittenList(formData);
       const extracted =
-        result.data?.extracted_items || result.extracted_items || result.items || [];
+        result.extracted_items || result.items || result.data?.extracted_items || [];
 
       const parsedList: ExtractedListItem[] =
         extracted.length > 0
           ? extracted.map((item: any) => ({
-              id: makeItemId(),
-              rawText: item.rawText || `${item.quantity || 10}kg ${item.cropName || item.item}`,
-              cropName: item.cropName || item.item || 'Carrot',
-              requestedQtyKg: Number(item.requestedQtyKg || item.quantity) || 20,
-              confidence: item.confidence || Math.round(92 + Math.random() * 6),
+              id: item.id || makeItemId(),
+              rawText: item.rawText || `${item.quantity || item.requestedQtyKg || 10}kg ${item.cropName || item.item}`,
+              cropName: item.cropName || item.item || 'Produce',
+              requestedQtyKg: Number(item.requestedQtyKg || item.quantity) || 10,
+              confidence: item.confidence || 95,
             }))
           : [
               { id: makeItemId(), rawText: '40kg Carrot', cropName: 'Carrot', requestedQtyKg: 40, confidence: 96 },
@@ -187,7 +198,7 @@ export default function BulkOrdersScreen() {
         id: `agent_${Date.now()}`,
         sender: 'AGENT',
         timestamp: new Date().toISOString(),
-        text: 'I parsed your handwritten crop requirements. You can adjust the quantities below before matching with verified farms:',
+        text: 'I parsed your handwritten crop requirements with Qwen2-VL OCR. You can adjust the quantities below before matching with verified farms:',
         isExtractionCard: true,
         items: parsedList,
       };

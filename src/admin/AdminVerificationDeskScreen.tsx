@@ -22,6 +22,7 @@ import {
   subscribeToVerificationRequests,
   upsertVerificationRequest,
 } from '../utils/storage';
+import { adminApi } from '../services/api';
 
 // ---------------------------------------------------------------------------
 // Design tokens (from Screen A-01's design.md — Section 1: Color Tokens)
@@ -114,7 +115,26 @@ export default function AdminVerificationDeskScreen() {
       setIsLoading(true);
     }
     try {
-      const requests = await getVerificationRequests();
+      let requests: VerificationRequest[] = [];
+      try {
+        const res = await adminApi.getVerifications();
+        if (Array.isArray(res)) {
+          requests = res as any;
+        } else if (res && Array.isArray((res as any).verifications)) {
+          requests = (res as any).verifications;
+        } else if (res && Array.isArray(res.data)) {
+          requests = res.data as any;
+        } else if (res && res.data && Array.isArray((res.data as any).verifications)) {
+          requests = (res.data as any).verifications;
+        }
+      } catch (apiErr) {
+        console.log('Admin backend sync notice:', apiErr);
+      }
+
+      if (!requests || requests.length === 0) {
+        requests = await getVerificationRequests();
+      }
+
       setQueue(requests);
       setSelectedFarmerId((current) => {
         if (current && requests.some((r) => r.farmerId === current)) return current;

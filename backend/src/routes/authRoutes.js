@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const FarmerProfile = require('../models/FarmerProfile');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
@@ -49,6 +50,13 @@ router.post('/register', async (req, res) => {
       password,
       isNewRegistration,
       userId,
+      farmName,
+      ownerName,
+      legalName,
+      slsiCertificateUrl,
+      certificateUrl,
+      slsiStatus,
+      bankDetails,
     } = req.body;
 
     const phone = (phoneNumber || mobile || '').trim();
@@ -64,7 +72,7 @@ router.post('/register', async (req, res) => {
       $or: [{ phoneNumber: phone }, { mobile: phone }],
     });
 
-    if (existingUser && isNewRegistration && String(existingUser._id) !== String(userId)) {
+    if (existingUser && isNewRegistration && (!userId || String(existingUser._id) !== String(userId))) {
       return res.status(400).json({
         success: false,
         message: 'This phone number is already registered. Please log in or use a different number.',
@@ -72,6 +80,7 @@ router.post('/register', async (req, res) => {
       });
     }
 
+    const assignedRole = (role || (farmName ? 'FARMER' : 'CUSTOMER')).toUpperCase();
     const planToSave =
       subscriptionPlan === 'BULK_ACCESS' || isBulkBuyer === true || bulkAccessPlan === 'BULK_ACCESS'
         ? 'BULK_ACCESS'
@@ -82,7 +91,7 @@ router.post('/register', async (req, res) => {
     if (user) {
       // Update existing user profile
       user.fullName = fullName || user.fullName;
-      user.role = role || user.role;
+      user.role = assignedRole || user.role;
       user.city = city !== undefined ? city : user.city;
       user.district = district !== undefined ? district : user.district;
       user.province = province !== undefined ? province : user.province;
@@ -104,7 +113,7 @@ router.post('/register', async (req, res) => {
         fullName,
         phoneNumber: phone,
         mobile: phone,
-        role: role || 'CUSTOMER',
+        role: assignedRole,
         city: city || '',
         district: district || '',
         province: province || '',
@@ -114,6 +123,48 @@ router.post('/register', async (req, res) => {
         password: hashedPassword,
       });
     }
+
+    // If farmer, also create/sync FarmerProfile linked to user._id
+    if (user.role === 'FARMER' || assignedRole === 'FARMER' || farmName) {
+      const fName = farmName || `${user.fullName}'s Organic Farm`;
+      const oName = ownerName || legalName || user.fullName;
+      const certUrl = slsiCertificateUrl || certificateUrl || null;
+      const certStatus = slsiStatus || (certUrl ? 'PENDING' : 'UNVERIFIED');
+
+      let fp = await FarmerProfile.findOne({ userId: user._id });
+      if (!fp) {
+        fp = await FarmerProfile.findOne({ mobileNumber: user.phoneNumber });
+      }
+
+      if (fp) {
+        fp.userId = user._id;
+        fp.ownerName = oName;
+        fp.farmName = fName;
+        fp.mobileNumber = user.phoneNumber;
+        fp.province = user.province || fp.province;
+        fp.district = user.district || fp.district;
+        fp.city = user.city || fp.city;
+        if (certUrl) fp.slsiCertificateUrl = certUrl;
+        if (slsiStatus) fp.slsiStatus = certStatus;
+        if (bankDetails) fp.bankDetails = bankDetails;
+        await fp.save();
+      } else {
+        await FarmerProfile.create({
+          userId: user._id,
+          ownerName: oName,
+          mobileNumber: user.phoneNumber,
+          farmName: fName,
+          province: user.province || '',
+          district: user.district || '',
+          city: user.city || '',
+          slsiStatus: certStatus,
+          slsiCertificateUrl: certUrl,
+          bankDetails: bankDetails || {},
+        });
+      }
+    }
+
+    console.log(`REGISTER SUCCESS [${user.role}]: ${user.fullName} (${user.phoneNumber}) - Plan: ${user.subscriptionPlan}${user.isBulkBuyer ? ' [BULK_BUYER]' : ''}`);
 
     const token = generateToken(user._id);
 
@@ -136,14 +187,16 @@ router.post('/register', async (req, res) => {
       },
     });
   } catch (error) {
+    console.error('Registration error details:', error);
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
         message: 'This phone number is already registered. Please log in or use a different number.',
         errorType: 'DUPLICATE_PHONE',
+        keyPattern: error.keyPattern,
+        keyValue: error.keyValue,
       });
     }
-    console.error('Registration error:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -171,6 +224,8 @@ router.post('/login', async (req, res) => {
         return res.status(401).json({ success: false, message: 'Invalid password credentials' });
       }
     }
+
+    console.log(`LOGIN SUCCESS: ${user.fullName} (${user.phoneNumber}) [Role: ${user.role}]`);
 
     const token = generateToken(user._id);
 

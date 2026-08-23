@@ -83,19 +83,8 @@ export default function StripeCheckoutModal({
     // Simulate Stripe payment processing
     setTimeout(() => {
       setIsProcessing(false);
-      Alert.alert(
-        'Payment Successful',
-        `Your subscription to ${planTitle} is now active!`,
-        [
-          {
-            text: 'Continue',
-            onPress: () => {
-              onSuccess();
-            },
-          },
-        ]
-      );
-    }, 1500);
+      onSuccess();
+    }, 800);
   };
 
   return (

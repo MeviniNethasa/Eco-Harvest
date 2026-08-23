@@ -5,7 +5,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "test:e2e": "node scripts/test-e2e-flow.js"
   },
   "keywords": [
     "ecoharvest",
@@ -18,12 +19,15 @@
   "author": "EcoHarvest Team",
   "license": "ISC",
   "dependencies": {
+    "axios": "^1.19.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "form-data": "^4.0.6",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.4.1",
+    "multer": "^2.2.0",
     "stripe": "^15.10.0"
   },
   "devDependencies": {

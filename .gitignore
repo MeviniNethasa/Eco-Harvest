@@ -51,3 +51,10 @@ venv/
 *.pyc
 __pycache__/
 *.cpython-*.pyc
+
+
+**/ocr_env/
+**/ocr_env/*
+
+
+

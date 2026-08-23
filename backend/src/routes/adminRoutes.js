@@ -43,11 +43,11 @@ router.get('/verifications', async (req, res) => {
 
     const data = farmers.map((f) => {
       const user = f.userId || {};
-      const ownerLegal = f.ownerName || user.fullName || f.farmName || 'Verified Merchant';
-      const phone = f.mobileNumber || user.phoneNumber || user.mobile || '0771234567';
-      const prov = f.province || f.location?.province || user.province || 'Central';
-      const dist = f.district || f.location?.district || user.district || 'Nuwara Eliya';
-      const city = f.city || f.location?.city || user.city || 'Nuwara Eliya';
+      const ownerLegal = f.ownerName || user.fullName || f.farmName || '';
+      const phone = f.mobileNumber || user.phoneNumber || user.mobile || '';
+      const prov = f.province || f.location?.province || user.province || '';
+      const dist = f.district || f.location?.district || user.district || '';
+      const city = f.city || f.location?.city || user.city || '';
 
       let status = 'PENDING';
       if (f.slsiStatus === 'VERIFIED' || f.isSLSIVerified) {
@@ -59,26 +59,23 @@ router.get('/verifications', async (req, res) => {
       return {
         id: f._id.toString(),
         farmerId: f._id.toString(),
-        farmName: f.farmName || 'Highland Organic Farm',
+        farmName: f.farmName || '',
         legalName: ownerLegal,
         businessRegistrationNumber: `PV-${f._id.toString().slice(-7).toUpperCase()}`,
         mobileNumber: phone,
-        isMobileVerified: true,
+        isMobileVerified: !!phone,
         province: prov,
         district: dist,
         city: city,
-        coordinates: f.location?.coordinates || { latitude: 6.9497, longitude: 80.7891 },
+        coordinates: f.location?.coordinates || null,
         slsiStandardNumber: 'SLS 1324:2018 (Organic Agricultural Standards)',
-        certificateIssueDate: f.createdAt ? f.createdAt.toISOString().split('T')[0] : '2025-01-15',
-        certificateExpiryDate: '2027-01-14',
-        certificateDocumentUrl:
-          f.slsiCertificateUrl ||
-          f.certificateUrl ||
-          'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=1200&q=80',
+        certificateIssueDate: f.createdAt ? f.createdAt.toISOString().split('T')[0] : '',
+        certificateExpiryDate: '',
+        certificateDocumentUrl: f.slsiCertificateUrl || '',
         bankDetails: {
-          bankName: f.bankDetails?.bankName || 'Bank of Ceylon',
-          branchCode: f.bankDetails?.branchCode || '701 (Main)',
-          accountNumber: f.bankDetails?.accountNumber || '008829103948',
+          bankName: f.bankDetails?.bankName || '',
+          branchCode: f.bankDetails?.branchCode || '',
+          accountNumber: f.bankDetails?.accountNumber || '',
           accountHolderName: f.bankDetails?.accountHolderName || ownerLegal,
         },
         verificationStatus: status,
@@ -87,7 +84,8 @@ router.get('/verifications', async (req, res) => {
       };
     });
 
-    return res.status(200).json({ success: true, count: data.length, data });
+    console.log(`ADMIN AUDIT: Fetched ${data.length} pending & verified farmer applications`);
+    return res.status(200).json({ success: true, count: data.length, data, verifications: data });
   } catch (error) {
     console.error('Error fetching admin verifications:', error);
     return res.status(500).json({ success: false, message: error.message });
@@ -100,16 +98,26 @@ router.post('/verifications/:id/approve', async (req, res) => {
     const { id } = req.params;
     const { commissionRate = 2.5 } = req.body;
 
+    let farmer = null;
     if (mongoose.Types.ObjectId.isValid(id)) {
-      const farmer = await FarmerProfile.findById(id);
-      if (farmer) {
-        farmer.slsiStatus = 'VERIFIED';
-        farmer.isSLSIVerified = true;
-        farmer.commissionRate = Number(commissionRate);
-        await farmer.save();
+      farmer = await FarmerProfile.findById(id);
+    }
+    if (!farmer) {
+      farmer = await FarmerProfile.findOne({ $or: [{ userId: id }, { mobileNumber: id }] });
+    }
+
+    if (farmer) {
+      farmer.slsiStatus = 'VERIFIED';
+      farmer.isSLSIVerified = true;
+      farmer.commissionRate = Number(commissionRate);
+      await farmer.save();
+
+      if (farmer.userId) {
+        await User.findByIdAndUpdate(farmer.userId, { isSLSIVerified: true });
       }
     }
 
+    console.log(`ADMIN AUDIT: Approved verification for farmer ID: ${id} (Commission: ${commissionRate}%)`);
     return res.status(200).json({
       success: true,
       message: `SLSI Application approved with ${commissionRate}% commission rate.`,
@@ -127,16 +135,26 @@ router.post('/verifications/:id/reject', async (req, res) => {
     const { id } = req.params;
     const { reason = 'Certificate document failed SLSI organic standard audit' } = req.body;
 
+    let farmer = null;
     if (mongoose.Types.ObjectId.isValid(id)) {
-      const farmer = await FarmerProfile.findById(id);
-      if (farmer) {
-        farmer.slsiStatus = 'REJECTED';
-        farmer.isSLSIVerified = false;
-        farmer.commissionRate = 5.0;
-        await farmer.save();
+      farmer = await FarmerProfile.findById(id);
+    }
+    if (!farmer) {
+      farmer = await FarmerProfile.findOne({ $or: [{ userId: id }, { mobileNumber: id }] });
+    }
+
+    if (farmer) {
+      farmer.slsiStatus = 'REJECTED';
+      farmer.isSLSIVerified = false;
+      farmer.commissionRate = 5.0;
+      await farmer.save();
+
+      if (farmer.userId) {
+        await User.findByIdAndUpdate(farmer.userId, { isSLSIVerified: false });
       }
     }
 
+    console.log(`ADMIN AUDIT: Rejected verification for farmer ID: ${id} (Reason: ${reason})`);
     return res.status(200).json({
       success: true,
       message: 'SLSI Application rejected. Reverted to 5% standard commission.',
@@ -208,6 +226,7 @@ router.get('/moderation/chats', async (req, res) => {
       })
     );
 
+    console.log(`ADMIN AUDIT: Fetched moderated chat feed (${data.length} flagged tickets)`);
     return res.status(200).json({
       success: true,
       count: data.length,
@@ -257,6 +276,7 @@ router.post('/moderation/override', async (req, res) => {
       await targetMessage.save();
     }
 
+    console.log(`ADMIN AUDIT: Moderation override applied for ticket ${ticketId} -> Action: ${action}`);
     return res.status(200).json({
       success: true,
       message: `Moderation ticket ${ticketId} action '${action}' applied successfully.`,
@@ -318,7 +338,7 @@ router.get('/escrow/ledger', async (req, res) => {
       const farmerNames =
         order.farmGroups?.map((g) => g.farmName).filter(Boolean).join(' & ') ||
         [...new Set(order.items?.map((i) => i.farmName).filter(Boolean))].join(' & ') ||
-        'Verified Farm Collective';
+        '';
 
       const masterId = `pi_${order._id.toString()}`;
 
@@ -332,9 +352,9 @@ router.get('/escrow/ledger', async (req, res) => {
         stripeStatus: order.escrowStatus === 'REFUNDED' ? 'REFUNDED' : 'SUCCEEDED_HELD_IN_ESCROW',
         escrowStatus: escrowState,
         uberDeliveryStatus: deliveryState,
-        uberTrackingId: `UBER-DIR-${(order.orderId || order._id.toString()).replace(/[^0-9]/g, '').slice(-5) || '99482'}`,
-        driverName: 'Pradeep Silva (Toyota HiAce WP-ND-8492)',
-        driverPhone: '+94 77 444 8899',
+        uberTrackingId: `UBER-DIR-${(order.orderId || order._id.toString()).replace(/[^0-9]/g, '').slice(-5) || '00000'}`,
+        driverName: '',
+        driverPhone: '',
         handshakeOtpStatus:
           order.status === 'delivered' || order.status === 'COMPLETED'
             ? 'VERIFIED_HANDSHAKE_COMPLETED'
@@ -347,6 +367,7 @@ router.get('/escrow/ledger', async (req, res) => {
       };
     });
 
+    console.log(`ADMIN AUDIT: Fetched escrow ledger (${data.length} active orders)`);
     return res.status(200).json({
       success: true,
       count: data.length,
@@ -380,6 +401,7 @@ router.post('/escrow/force-release', async (req, res) => {
       await targetOrder.save();
     }
 
+    console.log(`ADMIN AUDIT: Force released escrow funds for payment intent: ${masterPaymentIntentId}`);
     return res.status(200).json({
       success: true,
       message: `Escrow funds for ${masterPaymentIntentId} released to merchant bank account.`,
@@ -413,6 +435,7 @@ router.post('/escrow/refund', async (req, res) => {
       await targetOrder.save();
     }
 
+    console.log(`ADMIN AUDIT: Refunded escrow funds for payment intent: ${masterPaymentIntentId}`);
     return res.status(200).json({
       success: true,
       message: `Full client-side Stripe refund triggered for ${masterPaymentIntentId}.`,
@@ -453,75 +476,59 @@ router.get('/analytics/health', async (req, res) => {
 
     const totalVolume = allOrders.reduce((sum, o) => sum + (o.totalAmount || o.total || 0), 0);
 
+    console.log(`ADMIN AUDIT: Analytics health metrics compiled (Active Farmers: ${activeFarmers}, Verified: ${verifiedFarmers}, Bulk Buyers: ${bulkUsers}, Open Tickets: ${openTicketsCount})`);
+
     return res.status(200).json({
       success: true,
       data: {
         kpiSummary: {
-          totalDailyVolumeLKR: totalVolume || 1840500,
-          volumeGrowthPercent: 14.8,
-          activeBulkSubscriptions: bulkUsers || 248,
-          subscriptionGrowthPercent: 8.2,
-          meanFreshnessIndex: 94.2,
+          totalDailyVolumeLKR: totalVolume,
+          volumeGrowthPercent: 0,
+          activeBulkSubscriptions: bulkUsers,
+          subscriptionGrowthPercent: 0,
+          meanFreshnessIndex: 0,
           openSupportTickets: openTicketsCount,
           verifiedFarmerCount: verifiedFarmers,
           totalFarmers: activeFarmers,
         },
         freshnessBreakdown: {
-          gradeAOrganic: 82,
-          gradeBStandard: 14,
-          defectiveStale: 4,
+          gradeAOrganic: 0,
+          gradeBStandard: 0,
+          defectiveStale: 0,
         },
-        regionalSupplyDemandMap: [
-          {
-            region: 'Western Province (Colombo)',
-            coordinates: { latitude: 6.9271, longitude: 79.8612 },
-            bulkDemandCount: 42,
-            supplyVolumeKg: 12000,
-            status: 'HIGH_DEMAND_DEFICIT',
-            deficitCrops: ['Organic Carrots', 'Red Onion', 'Leeks'],
-            severityColor: '#EF4444',
-          },
-          {
-            region: 'Central Province (Nuwara Eliya & Kandy)',
-            coordinates: { latitude: 6.9497, longitude: 80.7891 },
-            bulkDemandCount: 8,
-            supplyVolumeKg: 85000,
-            status: 'SUPPLY_SURPLUS',
-            deficitCrops: [],
-            severityColor: '#10B981',
-          },
-          {
-            region: 'Northern Province (Jaffna)',
-            coordinates: { latitude: 9.6615, longitude: 80.0255 },
-            bulkDemandCount: 14,
-            supplyVolumeKg: 45000,
-            status: 'RED_ONION_SURPLUS',
-            deficitCrops: [],
-            severityColor: '#10B981',
-          },
-          {
-            region: 'Southern Province (Matara & Hambantota)',
-            coordinates: { latitude: 5.9549, longitude: 80.555 },
-            bulkDemandCount: 19,
-            supplyVolumeKg: 28000,
-            status: 'BALANCED',
-            deficitCrops: ['Cardamom'],
-            severityColor: '#F59E0B',
-          },
-          {
-            region: 'North Western Province (Kurunegala)',
-            coordinates: { latitude: 7.4863, longitude: 80.3623 },
-            bulkDemandCount: 11,
-            supplyVolumeKg: 34000,
-            status: 'COCONUT_SPICE_SURPLUS',
-            deficitCrops: [],
-            severityColor: '#10B981',
-          },
-        ],
+        regionalSupplyDemandMap: [],
       },
     });
   } catch (error) {
     console.error('Error fetching admin analytics:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// POST /api/admin/purge-demo-data (Purge all demo / mock records from collections)
+router.post('/purge-demo-data', async (req, res) => {
+  try {
+    const Notification = require('../models/Notification');
+    const [farmersDeleted, ordersDeleted, messagesDeleted, notificationsDeleted] = await Promise.all([
+      FarmerProfile.deleteMany({}),
+      Order.deleteMany({}),
+      Message.deleteMany({}),
+      Notification.deleteMany({}),
+    ]);
+
+    console.log(`ADMIN AUDIT: Demo data purge executed. (Farmers: ${farmersDeleted.deletedCount}, Orders: ${ordersDeleted.deletedCount}, Messages: ${messagesDeleted.deletedCount})`);
+    return res.status(200).json({
+      success: true,
+      message: 'All demo data successfully purged from MongoDB collections.',
+      purged: {
+        farmers: farmersDeleted.deletedCount,
+        orders: ordersDeleted.deletedCount,
+        messages: messagesDeleted.deletedCount,
+        notifications: notificationsDeleted.deletedCount,
+      },
+    });
+  } catch (error) {
+    console.error('Error purging demo data:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 });

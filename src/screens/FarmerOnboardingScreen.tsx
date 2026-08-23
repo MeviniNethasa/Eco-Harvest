@@ -44,6 +44,7 @@ import {
   syncFarmerProfileToVerificationQueue,
 } from '../utils/storage';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
+import { farmerApi } from '../services/api';
 
 // ---------------------------------------------------------------------------
 // Design tokens (from design.md — Screen M-02 spec)
@@ -272,10 +273,42 @@ export default function FarmerOnboardingScreen() {
   const districts = useMemo(() => getDistricts(province), [province]);
   const cities = useMemo(() => getCities(province, district), [province, district]);
 
-  // ---- Load the persisted profile ----
+  // ---- Load the persisted profile & sync with live MongoDB backend ----
   const loadProfile = React.useCallback(async () => {
-    const existing = await getFarmerProfile();
+    let existing = await getFarmerProfile();
+    if (existing?.id || existing?.mobileNumber) {
+      try {
+        const lookupKey = existing.id || existing.mobileNumber;
+        const res = await farmerApi.getProfile(lookupKey);
+        if (res && res.data) {
+          const backendStatus =
+            res.data.slsiStatus === 'VERIFIED' || res.data.isSLSIVerified
+              ? 'VERIFIED'
+              : res.data.slsiStatus === 'REJECTED'
+              ? 'REJECTED'
+              : existing.verificationStatus;
+
+          const merged: FarmerProfile = {
+            ...existing,
+            verificationStatus: backendStatus as VerificationStatus,
+            isSLSIVerified: backendStatus === 'VERIFIED',
+            commissionRate: res.data.commissionRate ?? existing.commissionRate,
+            slsiCertificateUri: res.data.slsiCertificateUrl || existing.slsiCertificateUri,
+          };
+          existing = await saveFarmerProfile(merged);
+        }
+      } catch (backendSyncErr) {
+        // Continue with local existing state if offline
+      }
+    }
     setProfile(existing);
+    if (existing) {
+      setVerificationStatus(existing.verificationStatus);
+      setCommissionRate(existing.commissionRate ?? DEFAULT_COMMISSION_RATE);
+      if (existing.slsiCertificateUri) {
+        setCertificateUri(existing.slsiCertificateUri);
+      }
+    }
     setIsLoadingProfile(false);
   }, []);
 
@@ -444,9 +477,12 @@ export default function FarmerOnboardingScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.7,
+        base64: true,
       });
       if (!result.canceled && result.assets?.length) {
-        setCertificateUri(result.assets[0].uri);
+        const asset = result.assets[0];
+        const uri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        setCertificateUri(uri);
         setVerificationStatus('PENDING_VERIFICATION');
       }
     } catch (err) {
@@ -547,6 +583,41 @@ export default function FarmerOnboardingScreen() {
 
       const saved = await saveFarmerProfile(profileToSave);
       await syncToAdminVerificationQueue(saved);
+
+      // ── Live HTTP dispatch to Express backend (MongoDB persistence) ──
+      // Sends the profile to POST /api/farmers/profile so it immediately
+      // appears in MongoDB and on the Admin Verification Desk (Screen A-01).
+      // Uses PENDING_VERIFICATION as the slsiStatus so the admin sees it
+      // in their pending queue. Failures are logged but don't block the
+      // local save — the farmer can still use the app offline.
+      try {
+        const backendPayload = {
+          ownerName: saved.legalName,
+          legalName: saved.legalName,
+          mobileNumber: saved.mobileNumber,
+          farmName: saved.farmName,
+          province: saved.province || '',
+          district: saved.district || '',
+          city: saved.city || '',
+          slsiStatus: saved.verificationStatus === 'VERIFIED' ? 'VERIFIED'
+            : saved.verificationStatus === 'REJECTED' ? 'REJECTED'
+            : 'PENDING_VERIFICATION',
+          isSLSIVerified: saved.isSLSIVerified || false,
+          slsiCertificateUrl: saved.slsiCertificateUri || '',
+          bankDetails: saved.bankDetails || {},
+          farmCoverPhotoUrl: saved.farmCoverPhotoUrl || '',
+          commissionRate: saved.commissionRate ?? 5.0,
+        };
+        await farmerApi.saveProfile(backendPayload);
+        console.log(`FARMER PROFILE SYNCED TO BACKEND: ${saved.farmName} (${saved.mobileNumber})`);
+      } catch (backendErr: any) {
+        console.error(`FARMER BACKEND SYNC FAILED: ${backendErr.message}`);
+        Alert.alert(
+          'Backend Sync Notice',
+          'Your profile was saved locally but could not be synced to the server. It will sync when you next save.',
+        );
+      }
+
       const wasFirstTime = !profile;
       setProfile(saved);
       setIsEditingProfile(false);

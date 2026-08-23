@@ -385,6 +385,13 @@ export default function ChatScreen() {
         >
           {messages.map((message) => {
             const isMe = message.senderRole === currentUserRole;
+            const isBlocked = Boolean(
+              message.isBlocked ||
+              (message as any).status === 'BLOCKED' ||
+              (message as any).moderationStatus === 'BLOCKED' ||
+              (message as any).moderationStatus === 'MERCHANT_SUSPENDED'
+            );
+
             return (
               <View
                 key={message.id}
@@ -397,15 +404,23 @@ export default function ChatScreen() {
                   style={[
                     styles.bubble,
                     isMe ? styles.bubbleGreen : styles.bubbleGray,
-                    message.isBlocked && styles.bubbleBlocked,
+                    isBlocked && styles.bubbleBlocked,
                   ]}
                 >
-                  <Text style={isMe ? styles.bubbleTextLight : styles.bubbleTextDark}>
-                    {message.text}
+                  <Text
+                    style={
+                      isBlocked
+                        ? styles.bubbleBlockedText
+                        : isMe
+                        ? styles.bubbleTextLight
+                        : styles.bubbleTextDark
+                    }
+                  >
+                    {isBlocked ? '[Message blocked by admin moderation]' : message.text}
                   </Text>
                 </View>
 
-                {message.isBlocked && (
+                {isBlocked && (
                   <View style={styles.blockedCard}>
                     <Ionicons name="alert-circle" size={16} color="#DC2626" />
                     <Text style={styles.blockedCardText}>
@@ -688,6 +703,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: '#111827',
+  },
+  bubbleBlockedText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontStyle: 'italic',
+    color: '#DC2626',
+    fontWeight: '500',
   },
   timestamp: {
     fontSize: 11,

@@ -45,7 +45,7 @@ router.get('/customer/:customerId', async (req, res) => {
 // POST /api/orders (Create new customer order)
 router.post('/', async (req, res) => {
   try {
-    const { orderId, customerId, farmerId, items, farmGroups, totalAmount, total, paymentMethod, deliveryAddress } =
+    const { orderId, customerId, farmerId, items, farmGroups, totalAmount, total, paymentMethod, deliveryAddress, stripePaymentIntent } =
       req.body;
 
     const actualOrderId = orderId || `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -62,8 +62,11 @@ router.post('/', async (req, res) => {
       status: 'placed',
       escrowStatus: 'LOCKED',
       paymentMethod: paymentMethod || 'CARD',
+      stripePaymentIntent: stripePaymentIntent || `pi_${actualOrderId}`,
       deliveryAddress: deliveryAddress || {},
     });
+
+    console.log(`ORDER CREATED: ID '${order.orderId}' (Customer: ${order.customerId}, Total: LKR ${finalTotal}, Stripe Intent: ${order.stripePaymentIntent}, Escrow: LOCKED)`);
 
     return res.status(201).json({ success: true, message: 'Order created', data: order });
   } catch (error) {
@@ -90,7 +93,37 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
+    console.log(`ORDER STATUS UPDATED: ID '${order.orderId}' -> Status: ${order.status}, Escrow: ${order.escrowStatus}`);
+
     return res.status(200).json({ success: true, message: 'Order status updated', data: order });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PATCH /api/orders/:id/review (Update order metadata with review & AI freshness score)
+router.patch('/:id/review', async (req, res) => {
+  try {
+    const { freshnessScore, freshnessGrade, reviewRating, reviewComment, reviewId } = req.body;
+    const update = {};
+    if (freshnessScore !== undefined) update.freshnessScore = freshnessScore;
+    if (freshnessGrade) update.freshnessGrade = freshnessGrade;
+    if (reviewRating !== undefined) update.reviewRating = reviewRating;
+    if (reviewComment) update.reviewComment = reviewComment;
+    if (reviewId) update.reviewId = reviewId;
+
+    const order = await Order.findOneAndUpdate(
+      { $or: [{ _id: req.params.id }, { orderId: req.params.id }] },
+      update,
+      { new: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    console.log(`ORDER REVIEW METADATA UPDATED: ID '${order.orderId}' -> Freshness: ${freshnessScore}, Rating: ${reviewRating}`);
+    return res.status(200).json({ success: true, message: 'Order review metadata updated', data: order });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

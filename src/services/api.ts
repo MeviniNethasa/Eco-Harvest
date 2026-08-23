@@ -4,14 +4,27 @@
 // to the Node.js + Express + MongoDB Atlas backend at http://localhost:5000/api.
 // Uses resilient fetch with error handling and fallback handling.
 
-const API_BASE_URL = 'http://localhost:5000/api';
+import { Platform } from 'react-native';
+
+/**
+ * Platform-aware base URL:
+ * - Android Emulator: 10.0.2.2 is the special alias for the host machine loopback.
+ * - iOS Simulator / Expo Web: 127.0.0.1 resolves to the Mac host correctly.
+ */
+const API_BASE_URL =
+  Platform.OS === 'android'
+    ? 'http://10.0.2.2:5000/api'
+    : 'http://127.0.0.1:5000/api';
+
+console.log(`[EcoHarvest API] Base URL: ${API_BASE_URL} (Platform: ${Platform.OS})`);
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
-  const headers = {
-    'Content-Type': 'application/json',
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const headers: Record<string, string> = {
     Accept: 'application/json',
-    ...(options.headers || {}),
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+    ...((options.headers as Record<string, string>) || {}),
   };
 
   const response = await fetch(url, {
@@ -131,6 +144,18 @@ export const orderApi = {
       method: 'PATCH',
       body: JSON.stringify({ status, escrowStatus }),
     }),
+
+  updateReview: (id: string, payload: {
+    freshnessScore?: number;
+    freshnessGrade?: string;
+    reviewRating?: number;
+    reviewComment?: string;
+    reviewId?: string;
+  }) =>
+    request<{ success: boolean; message: string; data: any }>(`/orders/${id}/review`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
 };
 
 // ---------------------------------------------------------------------------
@@ -242,6 +267,9 @@ export const farmerApi = {
   getById: (id: string) =>
     request<{ success: boolean; data: any }>(`/farmers/${id}`),
 
+  getProfile: (id: string) =>
+    request<{ success: boolean; data: any }>(`/farmers/${id}`),
+
   saveProfile: (payload: any) =>
     request<{ success: boolean; message: string; data: any }>('/farmers/profile', {
       method: 'POST',
@@ -253,8 +281,9 @@ export const farmerApi = {
 // AI & Computer Vision Service API (Express Proxy -> Python Service :5002)
 // ---------------------------------------------------------------------------
 export const aiApi = {
-  extractHandwrittenList: (payload: { imageUri?: string; imageBase64?: string; text?: string }) =>
-    request<{
+  extractHandwrittenList: (payload: FormData | { imageUri?: string; imageBase64?: string; text?: string }) => {
+    const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData;
+    return request<{
       success: boolean;
       source: string;
       raw_text?: string;
@@ -263,8 +292,9 @@ export const aiApi = {
       data?: any;
     }>('/ai/extract-handwritten-list', {
       method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+      body: isFormData ? payload : JSON.stringify(payload),
+    });
+  },
 
   assessFreshness: (payload: {
     imageUri?: string;
@@ -343,6 +373,10 @@ export const adminApi = {
   // Screen A-04: Ecosystem Analytics & Health
   getAnalyticsHealth: () =>
     request<{ success: boolean; data: any }>('/admin/analytics/health'),
+
+  // Purge Demo Data
+  purgeDemoData: () =>
+    request<{ success: boolean; message: string; purged: any }>('/admin/purge-demo-data', {
+      method: 'POST',
+    }),
 };
-
-

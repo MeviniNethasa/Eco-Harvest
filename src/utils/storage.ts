@@ -30,7 +30,7 @@ import {
   VerificationRequest,
 } from '../types';
 import { MOCK_CROPS, MOCK_FARMERS } from '../data/mockData';
-import { messageApi } from '../services/api';
+import { messageApi, orderApi } from '../services/api';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
@@ -1434,6 +1434,61 @@ export async function createOrder(payment: PaymentDetails): Promise<Order> {
 
   await saveOrders(updatedOrders);
   await clearCart();
+
+  // Persist to backend MongoDB Express API for Admin Escrow tracking.
+  // Awaited so failures are logged visibly (graceful degradation — the local
+  // order is still returned even if the backend is unreachable).
+  try {
+    const userProfile = await getUserProfile();
+    const customerId = userProfile?.id || userProfile?.phoneNumber || 'cust_anonymous';
+    const customerName = userProfile?.fullName ? `${userProfile.fullName} (${customerId})` : customerId;
+    const farmerId = cart[0]?.farmerId || '';
+    const stripePaymentIntent = `pi_${order.id}`;
+
+    await orderApi.create({
+      orderId: order.id,
+      customerId: customerName,
+      farmerId,
+      items: cart.map((item) => ({
+        cropId: item.cropId,
+        name: item.name,
+        quantity: item.quantity,
+        pricePerUnit: item.pricePerUnit,
+        unit: item.unit,
+        farmerId: item.farmerId || '',
+        farmName: item.farmName,
+        province: item.province || '',
+        district: item.district || '',
+        city: item.city || '',
+      })),
+      farmGroups: farmGroups.map((g) => ({
+        farmerId: g.items[0]?.farmerId || '',
+        farmName: g.farmName,
+        items: g.items.map((i) => ({
+          cropId: i.cropId,
+          name: i.name,
+          quantity: i.quantity,
+          pricePerUnit: i.pricePerUnit,
+          unit: i.unit,
+          farmerId: i.farmerId || '',
+          farmName: i.farmName,
+        })),
+        subtotal: g.subtotal,
+        deliveryFee: 0,
+      })),
+      totalAmount: summary.grandTotal,
+      total: summary.grandTotal,
+      stripePaymentIntent,
+      paymentMethod: 'STRIPE_ESCROW',
+      deliveryAddress: {
+        city: userProfile?.city || 'Colombo',
+        district: userProfile?.district || 'Colombo',
+      },
+    });
+    console.log(`ORDER SYNCED TO BACKEND: ${order.id} (Total: LKR ${summary.grandTotal})`);
+  } catch (backendErr: any) {
+    console.error(`ORDER BACKEND SYNC FAILED: ${order.id} — ${backendErr.message}`);
+  }
 
   return order;
 }

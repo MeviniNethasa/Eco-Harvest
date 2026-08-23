@@ -232,8 +232,50 @@ export default function ProfileScreen() {
         getActiveMode(),
       ]);
 
+      let updatedFarmer = farmer;
+      const lookupKey = farmer?.id || farmer?.mobileNumber || customer?.phoneNumber;
+      if (lookupKey) {
+        try {
+          const res = await farmerApi.getProfile(lookupKey);
+          if (res && res.data) {
+            const backendStatus =
+              res.data.slsiStatus === 'VERIFIED' || res.data.isSLSIVerified
+                ? 'VERIFIED'
+                : res.data.slsiStatus === 'REJECTED'
+                ? 'REJECTED'
+                : farmer?.verificationStatus ?? 'PENDING_VERIFICATION';
+
+            updatedFarmer = {
+              ...(farmer || ({} as any)),
+              id: farmer?.id || res.data._id || generateCustomerId(),
+              legalName: res.data.ownerName || res.data.legalName || farmer?.legalName || '',
+              mobileNumber: res.data.mobileNumber || farmer?.mobileNumber || '',
+              farmName: res.data.farmName || farmer?.farmName || '',
+              province: res.data.province || farmer?.province || '',
+              district: res.data.district || farmer?.district || '',
+              city: res.data.city || farmer?.city || '',
+              verificationStatus: backendStatus as VerificationStatus,
+              isSLSIVerified: backendStatus === 'VERIFIED',
+              commissionRate: res.data.commissionRate ?? farmer?.commissionRate ?? 5.0,
+              slsiCertificateUri: res.data.slsiCertificateUrl || farmer?.slsiCertificateUri,
+              bankDetails: res.data.bankDetails || farmer?.bankDetails || {
+                bankName: '',
+                branchCode: '',
+                accountNumber: '',
+                accountHolderName: '',
+              },
+            };
+            if (updatedFarmer) {
+              await saveFarmerProfile(updatedFarmer);
+            }
+          }
+        } catch (backendSyncErr) {
+          // Continue with local existing state if offline
+        }
+      }
+
       setCustomerProfile(customer);
-      setFarmerProfile(farmer);
+      setFarmerProfile(updatedFarmer);
       setActiveModeState(mode);
     } catch (err) {
       console.error('Failed to load profile state:', err);

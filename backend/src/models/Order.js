@@ -67,6 +67,10 @@ const OrderSchema = new mongoose.Schema(
       type: String,
       default: 'CARD',
     },
+    stripePaymentIntent: {
+      type: String,
+      default: '',
+    },
     deliveryAddress: {
       street: { type: String, default: '' },
       city: { type: String, default: '' },

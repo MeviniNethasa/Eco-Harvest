@@ -51,6 +51,12 @@ router.post('/', async (req, res) => {
       timestamp: new Date(),
     });
 
+    if (hasViolation) {
+      console.log(`MODERATION ALERT: Flagged message detected from '${senderId}' (Conversation: ${conversationId}) -> Offending text: "${text}"`);
+    } else {
+      console.log(`MESSAGE PROCESSED [PASSED]: From '${senderId}' (Conversation: ${conversationId})`);
+    }
+
     return res.status(201).json({
       success: true,
       message: hasViolation ? 'Message blocked by moderation filter' : 'Message sent',
