@@ -1625,6 +1625,67 @@ export async function getFarmerRating(
   return { average, count };
 }
 
+export interface FarmerFreshnessScore {
+  average: number; // e.g. 94 (%)
+  count: number;
+  grade: string; // e.g. 'Grade A'
+  isSLSIVerified: boolean;
+  globalAverage: number; // platform average
+}
+
+/**
+ * Calculates the average AI VGG16 freshness score for a specific farmer from all
+ * product reviews, as well as the platform ecosystem average across all farmers.
+ */
+export async function getFarmerFreshnessScore(
+  farmerId: string
+): Promise<FarmerFreshnessScore> {
+  const allReviews = await getProductReviews();
+  const validAllReviews = allReviews.filter((r) => typeof r.aiFreshnessScore === 'number');
+  
+  const globalTotal = validAllReviews.reduce((sum, r) => sum + r.aiFreshnessScore, 0);
+  const globalAverage = validAllReviews.length > 0
+    ? Math.round(globalTotal / validAllReviews.length)
+    : 93;
+
+  const farmReviews = validAllReviews.filter((r) => r.farmerId === farmerId);
+  const count = farmReviews.length;
+
+  if (count === 0) {
+    const farmer = await getFarmerById(farmerId);
+    const isSLSI = Boolean(farmer?.isSLSIVerified);
+    const benchmarkScore = isSLSI ? 95 : 88;
+    return {
+      average: benchmarkScore,
+      count: 0,
+      grade: benchmarkScore >= 85 ? 'Grade A (SLSI)' : 'Standard Grade',
+      isSLSIVerified: isSLSI,
+      globalAverage,
+    };
+  }
+
+  const farmTotal = farmReviews.reduce((sum, r) => sum + r.aiFreshnessScore, 0);
+  const average = Math.round(farmTotal / count);
+  const isSLSIVerified = average >= 80;
+  const grade = average >= 90 ? 'Grade A+ (SLSI)' : average >= 80 ? 'Grade A' : 'Standard';
+
+  return {
+    average,
+    count,
+    grade,
+    isSLSIVerified,
+    globalAverage,
+  };
+}
+
+export async function getOverallFreshnessAverage(): Promise<{ average: number; count: number }> {
+  const allReviews = await getProductReviews();
+  const valid = allReviews.filter((r) => typeof r.aiFreshnessScore === 'number');
+  if (valid.length === 0) return { average: 93, count: 0 };
+  const total = valid.reduce((sum, r) => sum + r.aiFreshnessScore, 0);
+  return { average: Math.round(total / valid.length), count: valid.length };
+}
+
 // ---------------------------------------------------------------------------
 // Delivery tracking (Screen M-04: Uber Developer Sandbox Live Delivery Tracking)
 // ---------------------------------------------------------------------------

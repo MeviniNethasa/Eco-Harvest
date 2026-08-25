@@ -19,7 +19,13 @@ import { RouteProp, useFocusEffect, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Crop, FarmerProfile, MarketplaceStackParamList } from '../types';
-import { getFarmerById, getFarmerRating, getProductsByFarmerId } from '../utils/storage';
+import {
+  getFarmerById,
+  getFarmerRating,
+  getFarmerFreshnessScore,
+  FarmerFreshnessScore,
+  getProductsByFarmerId,
+} from '../utils/storage';
 import ProductCard from '../components/ProductCard';
 import SLSIBadge from '../components/SLSIBadge';
 
@@ -50,13 +56,10 @@ export default function FarmerDetailScreen() {
   const [products, setProducts] = useState<Crop[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
-  // Average star rating + review count for this farm (the "★ 4.5 (2)"
-  // badge in the header). null while it hasn't loaded yet — distinct from
-  // { average: 0, count: 0 }, which means "loaded, but no reviews yet".
   const [rating, setRating] = useState<{ average: number; count: number } | null>(null);
+  const [freshness, setFreshness] = useState<FarmerFreshnessScore | null>(null);
 
-  // getFarmerById reads AsyncStorage (it checks the on-device farmer
-  // profile before falling back to MOCK_FARMERS) so it's async.
+  // getFarmerById reads AsyncStorage
   useEffect(() => {
     let isActive = true;
     getFarmerById(farmerId).then((result) => {
@@ -67,8 +70,6 @@ export default function FarmerDetailScreen() {
     };
   }, [farmerId]);
 
-  // getProductsByFarmerId is async (filters the shared crop catalog down to
-  // this farm), so it's loaded separately with its own loading state.
   const loadProducts = useCallback(async () => {
     setLoadingProducts(true);
     try {
@@ -79,27 +80,20 @@ export default function FarmerDetailScreen() {
     }
   }, [farmerId]);
 
-  // Same reasoning as loadProducts below re: why this is a separate
-  // useFocusEffect-driven load rather than a mount-only useEffect — a
-  // review submitted from the Orders tab's ReviewModal after a delivery
-  // should update this farm's average rating the moment the shopper
-  // navigates back here, not only after a full app remount.
-  const loadRating = useCallback(async () => {
-    const farmRating = await getFarmerRating(farmerId);
+  const loadRatingAndFreshness = useCallback(async () => {
+    const [farmRating, farmFreshness] = await Promise.all([
+      getFarmerRating(farmerId),
+      getFarmerFreshnessScore(farmerId),
+    ]);
     setRating(farmRating);
+    setFreshness(farmFreshness);
   }, [farmerId]);
 
-  // useFocusEffect (rather than a plain mount-only useEffect) so crops
-  // re-query AsyncStorage every time this screen comes back into focus —
-  // e.g. after navigating away to add/publish a crop for this farm and
-  // returning. A one-shot useEffect only fired on first mount, so a crop
-  // added after that point never appeared here until the app remounted the
-  // screen from scratch.
   useFocusEffect(
     useCallback(() => {
       loadProducts();
-      loadRating();
-    }, [loadProducts, loadRating])
+      loadRatingAndFreshness();
+    }, [loadProducts, loadRatingAndFreshness])
   );
 
   const handleAddedToCart = useCallback(() => {
@@ -122,15 +116,8 @@ export default function FarmerDetailScreen() {
         )}
         ListHeaderComponent={
           <View style={styles.header}>
-            {/* position: 'relative' required so SLSIBadge (position:
-                absolute internally) anchors within the cover image. */}
             <View style={styles.coverWrap}>
               <Image source={{ uri: coverUri }} style={styles.coverImage} />
-              {/* SLSIBadge has no isVerified prop by design (see
-                  SLSIBadge.tsx) — mount it only when the farm is verified.
-                  Pinned to the top-right corner of the cover image so it
-                  never sits on top of farmName/description in headerBody
-                  below. */}
               {farm?.isSLSIVerified && <SLSIBadge style={styles.slsiBadge} />}
             </View>
 
@@ -138,24 +125,48 @@ export default function FarmerDetailScreen() {
               <View style={styles.farmNameRow}>
                 <Text style={styles.farmName}>{farm?.farmName || farmName}</Text>
 
-                {/* rating === null means "hasn't loaded yet" — render
-                    nothing rather than flash a "New" badge that then
-                    jumps to a real average once getFarmerRating resolves. */}
-                {rating && (
-                  <View style={styles.ratingBadge}>
-                    <Ionicons
-                      name="star"
-                      size={14}
-                      color={rating.count > 0 ? '#D97706' : '#9CA3AF'}
-                    />
-                    <Text style={styles.ratingBadgeText}>
-                      {rating.count > 0
-                        ? `${rating.average.toFixed(1)} (${rating.count})`
-                        : 'New'}
+                <View style={styles.badgesCluster}>
+                  {rating && (
+                    <View style={styles.ratingBadge}>
+                      <Ionicons
+                        name="star"
+                        size={13}
+                        color={rating.count > 0 ? '#D97706' : '#9CA3AF'}
+                      />
+                      <Text style={styles.ratingBadgeText}>
+                        {rating.count > 0
+                          ? `${rating.average.toFixed(1)} (${rating.count})`
+                          : 'New'}
+                      </Text>
+                    </View>
+                  )}
+
+                  {freshness && (
+                    <View style={styles.freshnessBadge}>
+                      <Ionicons name="leaf" size={13} color="#15803D" />
+                      <Text style={styles.freshnessBadgeText}>
+                        {freshness.average}% Fresh
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {freshness && (
+                <View style={styles.freshnessSummaryRow}>
+                  <View style={styles.freshnessPill}>
+                    <Text style={styles.freshnessPillLabel}>
+                      VGG16 AI Quality Score:
+                    </Text>
+                    <Text style={styles.freshnessPillValue}>
+                      {freshness.average}% ({freshness.grade})
                     </Text>
                   </View>
-                )}
-              </View>
+                  <Text style={styles.freshnessGlobalComparison}>
+                    Platform Avg: {freshness.globalAverage}%
+                  </Text>
+                </View>
+              )}
 
               {formatFarmLocation(farm) ? (
                 <View style={styles.locationRow}>
@@ -164,8 +175,6 @@ export default function FarmerDetailScreen() {
                 </View>
               ) : null}
 
-              {/* FarmerProfile's "About this farm" field is `description`,
-                  not `bio` — see src/types/index.ts. */}
               {farm?.description ? (
                 <Text style={styles.bioText}>{farm.description}</Text>
               ) : null}
@@ -235,19 +244,72 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#111827',
   },
+  badgesCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   ratingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 3,
     backgroundColor: '#FEF3C7',
     borderRadius: 8,
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 4,
   },
   ratingBadgeText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#92400E',
+  },
+  freshnessBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  freshnessBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  freshnessSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  freshnessPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  freshnessPillLabel: {
+    fontSize: 12,
+    color: '#166534',
+    fontWeight: '500',
+  },
+  freshnessPillValue: {
+    fontSize: 12,
+    color: '#15803D',
+    fontWeight: '700',
+  },
+  freshnessGlobalComparison: {
+    fontSize: 11,
+    color: '#6B7280',
+    fontWeight: '500',
   },
   locationRow: {
     flexDirection: 'row',

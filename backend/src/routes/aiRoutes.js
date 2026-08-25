@@ -171,56 +171,70 @@ router.post('/extract-handwritten-list', upload.single('image'), async (req, res
 });
 
 // POST /api/ai/assess-freshness
-router.post('/assess-freshness', async (req, res) => {
+router.post('/assess-freshness', upload.single('image'), async (req, res) => {
   try {
-    const { imageUri, imageBase64, cropCategory, cropName } = req.body;
+    let imageBuffer = req.file?.buffer;
+    let mimeType = req.file?.mimetype || 'image/jpeg';
+    let fileName = req.file?.originalname || 'crop_inspection.jpg';
+    let cropName = req.body?.cropName || req.body?.cropCategory || 'Organic Produce';
+
+    if (!imageBuffer && req.body?.imageBase64) {
+      const cleanBase64 = req.body.imageBase64.replace(/^data:image\/\w+;base64,/, '');
+      imageBuffer = Buffer.from(cleanBase64, 'base64');
+    }
 
     try {
-      const response = await axios.post(
-        `${PYTHON_AI_BASE_URL}/assess-freshness`,
-        { imageUri, imageBase64, cropCategory, cropName },
-        { headers: { 'Content-Type': 'application/json' }, timeout: AI_TIMEOUT_MS }
-      );
+      let pythonResponse;
+      if (imageBuffer) {
+        const form = new FormData();
+        form.append('image', imageBuffer, {
+          filename: fileName,
+          contentType: mimeType,
+        });
+        form.append('cropName', cropName);
 
-      if (response.data) {
+        pythonResponse = await axios.post(`${PYTHON_OCR_URL}/assess-freshness`, form, {
+          headers: {
+            ...form.getHeaders(),
+          },
+          timeout: AI_TIMEOUT_MS,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+        });
+      } else {
+        pythonResponse = await axios.post(
+          `${PYTHON_OCR_URL}/assess-freshness`,
+          {
+            imageUri: req.body?.imageUri,
+            imageBase64: req.body?.imageBase64,
+            cropName,
+          },
+          {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: AI_TIMEOUT_MS,
+          }
+        );
+      }
+
+      if (pythonResponse.data && pythonResponse.data.success) {
         return res.status(200).json({
           success: true,
-          source: 'vgg16_classifier_service',
-          pipeline: 'EcoHarvest/AI/notebook copy.ipynb',
-          data: response.data.data || response.data,
+          source: 'vgg16_trained_model',
+          endpoint: `${PYTHON_OCR_URL}/assess-freshness`,
+          data: pythonResponse.data.data,
         });
       }
     } catch (proxyErr) {
-      console.warn('[AI Proxy]: Python freshness service notice:', proxyErr.message);
+      console.warn('[AI Proxy]: Python freshness service call failed:', proxyErr.message);
+      return res.status(502).json({
+        success: false,
+        message: `Freshness assessment microservice unavailable: ${proxyErr.message}`,
+      });
     }
 
-    const freshnessScore = Math.floor(88 + Math.random() * 11);
-    const isSLSICompliant = freshnessScore >= 80;
-
-    let predictedState = 'Fresh';
-    if (freshnessScore < 20) predictedState = 'Rotten';
-    else if (freshnessScore < 45) predictedState = 'Spoiled';
-    else if (freshnessScore < 70) predictedState = 'Stale';
-    else if (freshnessScore < 85) predictedState = 'Slightly_Aged';
-
-    return res.status(200).json({
-      success: true,
-      source: 'vgg16_freshness_engine',
-      pipeline: 'EcoHarvest/AI/notebook copy.ipynb',
-      data: {
-        cropName: cropName || 'Organic Vegetable',
-        predictedState,
-        freshnessScore,
-        confidence: Math.round(92 + Math.random() * 6),
-        isSLSIVerified: isSLSICompliant,
-        slsiGrade: isSLSICompliant ? 'Grade A (Organic Certified)' : 'Standard Grade',
-        visualInspection: {
-          surfaceTexture: isSLSICompliant ? 'Smooth & Firm' : 'Moderate Softening',
-          colorVibrancy: isSLSICompliant ? 'High Natural Chlorophyll/Carotenoid Density' : 'Slight Browning',
-          defectPercentage: Math.max(0, 100 - freshnessScore),
-        },
-        shelfLifeEstimateDays: Math.max(1, Math.round((freshnessScore / 100) * 7)),
-      },
+    return res.status(400).json({
+      success: false,
+      message: 'No photo provided for freshness inspection',
     });
   } catch (error) {
     console.error('Error in assess-freshness proxy:', error);

@@ -315,14 +315,22 @@ async function decodeJpegToRgbTensor(uri: string): Promise<Float32Array> {
   return resampleToNormalizedRgbTensor(decoded, MODEL_INPUT_SIZE);
 }
 
-async function runFreshnessInference(photoUri: string): Promise<FreshnessResult> {
+async function runFreshnessInference(
+  photoUri: string,
+  base64?: string,
+  cropName?: string
+): Promise<FreshnessResult> {
   try {
     // 1. Query the live Python VGG16 / Express AI Freshness API
-    const aiResponse = await aiApi.assessFreshness({ imageUri: photoUri });
+    const aiResponse = await aiApi.assessFreshness({
+      imageUri: photoUri,
+      imageBase64: base64,
+      cropName: cropName || 'Organic Vegetable',
+    });
     if (aiResponse && aiResponse.data && typeof aiResponse.data.freshnessScore === 'number') {
       const score = aiResponse.data.freshnessScore;
       const state = aiResponse.data.predictedState || (score >= 80 ? 'Fresh' : 'Standard');
-      const letterGrade = score >= 85 ? 'A' : score >= 70 ? 'B' : score >= 50 ? 'C' : 'D';
+      const letterGrade = score >= 85 ? 'Grade A' : score >= 70 ? 'Grade B' : score >= 50 ? 'Grade C' : 'Standard';
       return {
         score,
         grade: letterGrade,
@@ -330,7 +338,7 @@ async function runFreshnessInference(photoUri: string): Promise<FreshnessResult>
       };
     }
   } catch (apiErr) {
-    console.log('[Freshness API notice]: Using fallback scoring:', apiErr);
+    console.log('[Freshness API notice]: Using local scoring fallback:', apiErr);
   }
 
   const seed = hashStringToUnitInterval(photoUri);
@@ -344,6 +352,7 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
   const [rating, setRating] = useState(0);
   const [qualityTag, setQualityTag] = useState<ReviewQualityTag | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [aiResult, setAiResult] = useState<FreshnessResult | null>(null);
   const [comment, setComment] = useState('');
@@ -358,6 +367,7 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
     setRating(0);
     setQualityTag(null);
     setPhotoUri(null);
+    setPhotoBase64(null);
     setAnalyzing(false);
     setAiResult(null);
     setComment('');
@@ -369,13 +379,14 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
     onClose();
   }, [onClose, resetState]);
 
-  const analyzePhoto = useCallback(async (uri: string) => {
+  const analyzePhoto = useCallback(async (uri: string, b64?: string) => {
     const runId = ++analysisRunId.current;
     setAnalyzing(true);
     setAiResult(null);
 
     try {
-      const result = await runFreshnessInference(uri);
+      const cropName = order?.items[0]?.name || 'Organic Vegetable';
+      const result = await runFreshnessInference(uri, b64, cropName);
       if (analysisRunId.current === runId) {
         setAiResult(result);
       }
@@ -384,12 +395,10 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
         setAnalyzing(false);
       }
     }
-  }, []);
+  }, [order]);
 
   const handleCapturePhoto = useCallback(async () => {
     try {
-      // Dynamically required so the app doesn't hard-crash on import if
-      // expo-image-picker hasn't been installed yet in this project.
       const ImagePicker = await import('expo-image-picker');
 
       const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -400,19 +409,18 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: false,
         quality: 0.7,
+        base64: true,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) {
         return;
       }
 
-      const uri = result.assets[0].uri;
-      setPhotoUri(uri);
-      void analyzePhoto(uri);
+      const asset = result.assets[0];
+      setPhotoUri(asset.uri);
+      setPhotoBase64(asset.base64 || null);
+      void analyzePhoto(asset.uri, asset.base64 || undefined);
     } catch (error) {
-      // No camera hardware, package not installed, or permission denied —
-      // fall back to a mock capture rather than blocking the review flow
-      // (this keeps the modal testable in simulator/web).
       console.warn('Live camera capture unavailable, using simulated capture:', error);
       Alert.alert(
         'Camera unavailable',
@@ -436,18 +444,18 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: false,
         quality: 0.7,
+        base64: true,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) {
         return;
       }
 
-      const uri = result.assets[0].uri;
-      setPhotoUri(uri);
-      void analyzePhoto(uri);
+      const asset = result.assets[0];
+      setPhotoUri(asset.uri);
+      setPhotoBase64(asset.base64 || null);
+      void analyzePhoto(asset.uri, asset.base64 || undefined);
     } catch (error) {
-      // Gallery access unavailable/denied, or package not installed —
-      // fall back to a simulated photo so the flow stays testable.
       console.warn('Gallery upload unavailable, using simulated capture:', error);
       Alert.alert(
         'Gallery unavailable',
