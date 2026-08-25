@@ -113,16 +113,33 @@ export default function BulkOrdersScreen() {
 
   const isSubscribedCustomer = customerProfile?.subscriptionPlan === 'BULK_ACCESS';
 
+  const handleUpgradePress = () => {
+    if (!customerProfile) {
+      // Unregistered user -> Redirect directly to Customer Registration Screen
+      (navigation as any).navigate('Profile', {
+        screen: 'RegisterCustomer',
+        params: { initialPlan: 'BULK_ACCESS' },
+      });
+    } else {
+      // Registered customer -> Open Stripe modal
+      setIsStripeModalVisible(true);
+    }
+  };
+
   const handleUpgradeSuccess = async () => {
     try {
+      if (!customerProfile) {
+        setIsStripeModalVisible(false);
+        (navigation as any).navigate('Profile', {
+          screen: 'RegisterCustomer',
+          params: { initialPlan: 'BULK_ACCESS' },
+        });
+        return;
+      }
+
       const updated: CustomerProfile = {
-        id: customerProfile?.id ?? generateCustomerId(),
-        fullName: customerProfile?.fullName ?? 'Bulk Buyer',
-        phoneNumber: customerProfile?.phoneNumber ?? '0771234567',
-        city: customerProfile?.city ?? 'Colombo',
-        district: customerProfile?.district ?? 'Colombo',
+        ...customerProfile,
         subscriptionPlan: 'BULK_ACCESS',
-        createdAt: customerProfile?.createdAt ?? new Date().toISOString(),
       };
       await saveUserProfile(updated);
       setCustomerProfile(updated);
@@ -643,12 +660,20 @@ export default function BulkOrdersScreen() {
 
             <Pressable
               style={styles.upgradeButton}
-              onPress={() => setIsStripeModalVisible(true)}
+              onPress={handleUpgradePress}
               accessibilityRole="button"
               accessibilityLabel="Upgrade to Bulk Access"
             >
-              <Ionicons name="card-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.upgradeButtonText}>Upgrade to Bulk Access (LKR 9,500/mo)</Text>
+              <Ionicons
+                name={customerProfile ? 'card-outline' : 'person-add-outline'}
+                size={18}
+                color="#FFFFFF"
+              />
+              <Text style={styles.upgradeButtonText}>
+                {customerProfile
+                  ? 'Upgrade to Bulk Access (LKR 9,500/mo)'
+                  : 'Register as Customer & Get Bulk Access'}
+              </Text>
             </Pressable>
           </View>
         </ScrollView>

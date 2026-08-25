@@ -14,6 +14,7 @@ import {
   FarmerProfile,
   MarketplaceStackParamList,
   OrdersStackParamList,
+  SubscriptionPlan,
 } from '../types';
 import {
   getActiveMode,
@@ -52,7 +53,7 @@ const Tab = createBottomTabNavigator<CombinedTabParamList>();
 export type ProfileStackParamList = {
   ProfileHome: undefined;
   FarmerOnboarding: undefined;
-  RegisterCustomer: undefined;
+  RegisterCustomer: { initialPlan?: SubscriptionPlan } | undefined;
 };
 const ProfileStack = createNativeStackNavigator<ProfileStackParamList>();
 

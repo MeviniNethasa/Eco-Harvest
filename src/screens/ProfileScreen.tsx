@@ -367,12 +367,15 @@ export default function ProfileScreen() {
 
     // If customer selected paid BULK_ACCESS plan, require Stripe payment step
     if (subscriptionPlan === 'BULK_ACCESS' && customerProfile?.subscriptionPlan !== 'BULK_ACCESS') {
-      setIsStripeModalVisible(true);
+      setIsRegisterModalVisible(false);
+      setTimeout(() => {
+        setIsStripeModalVisible(true);
+      }, 250);
       return;
     }
 
-    // Otherwise standard plan / free save
-    commitSaveCustomerProfile('STANDARD');
+    // Otherwise standard plan or existing bulk plan save
+    commitSaveCustomerProfile(subscriptionPlan);
   };
 
   const commitSaveCustomerProfile = async (planToSave: SubscriptionPlan) => {

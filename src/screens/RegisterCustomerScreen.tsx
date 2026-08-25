@@ -18,7 +18,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
 import StandardHeader from '../components/StandardHeader';
@@ -26,6 +26,7 @@ import StripeCheckoutModal from '../components/StripeCheckoutModal';
 import { authApi, stripeApi } from '../services/api';
 import { generateCustomerId, saveUserProfile, setActiveMode } from '../utils/storage';
 import type { CustomerProfile, SubscriptionPlan } from '../types';
+import type { ProfileStackParamList } from '../navigation/TabNavigator';
 
 const tokens = {
   colorPrimaryGreen: '#15803D',
@@ -142,14 +143,18 @@ const DropdownField: React.FC<SelectProps> = ({
 
 export default function RegisterCustomerScreen() {
   const navigation = useNavigation();
+  const route = useRoute<RouteProp<ProfileStackParamList, 'RegisterCustomer'>>();
+  const initialPlan = route.params?.initialPlan;
 
   const [fullName, setFullName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [province, setProvince] = useState<string | null>(null);
   const [district, setDistrict] = useState<string | null>(null);
   const [city, setCity] = useState<string | null>(null);
-  const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>('STANDARD');
-  const [isBulkBuyer, setIsBulkBuyer] = useState(false);
+  const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>(
+    initialPlan === 'BULK_ACCESS' ? 'BULK_ACCESS' : 'STANDARD'
+  );
+  const [isBulkBuyer, setIsBulkBuyer] = useState(initialPlan === 'BULK_ACCESS');
 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
