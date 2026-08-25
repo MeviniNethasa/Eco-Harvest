@@ -406,7 +406,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: AdminTheme.bgSurfaceBorder,
   },
-  tableRowSelected: { backgroundColor: '#13283A', borderColor: AdminTheme.colorInfoBlue, borderWidth: 1 },
+  tableRowSelected: { backgroundColor: AdminTheme.colorBlueSubtle, borderColor: AdminTheme.colorInfoBlue, borderWidth: 1 },
   intentIdText: { color: AdminTheme.colorTextMain, fontSize: 11, fontWeight: '700' },
   customerSubtext: { color: AdminTheme.colorTextDim, fontSize: 10 },
   orderIdText: { color: AdminTheme.colorTextMain, fontSize: 12, fontWeight: '700' },
@@ -424,8 +424,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   badgeDelivered: { backgroundColor: AdminTheme.colorEmeraldSubtle },
-  badgeInTransit: { backgroundColor: '#1E3A8A' },
-  badgeDispatched: { backgroundColor: '#451A03' },
+  badgeInTransit: { backgroundColor: AdminTheme.colorBlueSubtle },
+  badgeDispatched: { backgroundColor: AdminTheme.colorAmberSubtle },
   deliveryBadgeText: { fontSize: 10, fontWeight: '700' },
 
   otpPill: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -434,7 +434,7 @@ const styles = StyleSheet.create({
   escrowStatePill: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4, alignSelf: 'flex-start' },
   escrowReleased: { backgroundColor: AdminTheme.colorEmeraldSubtle },
   escrowRefunded: { backgroundColor: AdminTheme.colorCrimsonSubtle },
-  escrowHeld: { backgroundColor: '#451A03' },
+  escrowHeld: { backgroundColor: AdminTheme.colorAmberSubtle },
   escrowStateText: { fontSize: 10, fontWeight: '700' },
 
   // Details

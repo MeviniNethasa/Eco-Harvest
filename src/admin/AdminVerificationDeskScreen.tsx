@@ -30,12 +30,12 @@ import { adminApi } from '../services/api';
 const tokens = {
   colorPrimaryGreen: '#15803D',
   colorAlertCrimson: '#DC2626',
-  colorBgSidebar: '#1E293B',
-  colorBgWorkspace: '#F8FAFC',
+  colorBgSidebar: '#FFFFFF',
+  colorBgWorkspace: '#FAFAFA',
   colorBgPane: '#FFFFFF',
-  colorBorderGray: '#E2E8F0',
-  colorTextDark: '#0F172A',
-  colorTextMuted: '#64748B',
+  colorBorderGray: '#E5E7EB',
+  colorTextDark: '#111827',
+  colorTextMuted: '#4B5563',
 };
 
 const SIDEBAR_WIDTH = 240;
@@ -579,9 +579,11 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.colorBgSidebar,
     paddingVertical: 20,
     paddingHorizontal: 16,
+    borderRightWidth: 1,
+    borderRightColor: tokens.colorBorderGray,
   },
   sidebarBrand: {
-    color: '#FFFFFF',
+    color: tokens.colorTextDark,
     fontSize: 16,
     fontWeight: '700',
     marginBottom: 24,
@@ -593,21 +595,21 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   sidebarItemActive: {
-    backgroundColor: 'rgba(21,128,61,0.25)',
+    backgroundColor: '#DCFCE7',
   },
   sidebarItemText: {
-    color: '#94A3B8',
+    color: tokens.colorTextMuted,
     fontSize: 13,
     fontWeight: '500',
   },
   sidebarItemTextActive: {
-    color: '#FFFFFF',
+    color: tokens.colorPrimaryGreen,
     fontWeight: '700',
   },
   sidebarQueue: {
     marginTop: 24,
     borderTopWidth: 1,
-    borderTopColor: '#334155',
+    borderTopColor: tokens.colorBorderGray,
     paddingTop: 16,
   },
   sidebarQueueHeaderRow: {
@@ -618,7 +620,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   sidebarQueueLabel: {
-    color: '#64748B',
+    color: tokens.colorTextMuted,
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 0.5,
@@ -628,16 +630,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#334155',
-    backgroundColor: '#0F172A',
+    borderColor: tokens.colorBorderGray,
+    backgroundColor: '#F3F4F6',
   },
   sidebarRefreshButtonText: {
-    color: '#94A3B8',
+    color: tokens.colorTextMuted,
     fontSize: 10,
     fontWeight: '700',
   },
   sidebarQueueEmptyText: {
-    color: '#64748B',
+    color: tokens.colorTextMuted,
     fontSize: 11,
     lineHeight: 16,
   },
@@ -648,10 +650,10 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   sidebarQueueItemActive: {
-    backgroundColor: '#334155',
+    backgroundColor: '#DCFCE7',
   },
   sidebarQueueItemText: {
-    color: '#E2E8F0',
+    color: tokens.colorTextDark,
     fontSize: 12,
   },
 

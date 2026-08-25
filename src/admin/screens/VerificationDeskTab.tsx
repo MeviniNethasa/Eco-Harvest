@@ -569,7 +569,7 @@ const styles = StyleSheet.create({
   badgePill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   badgeVerified: { backgroundColor: AdminTheme.colorEmeraldSubtle },
   badgeRejected: { backgroundColor: AdminTheme.colorCrimsonSubtle },
-  badgePending: { backgroundColor: '#451A03' },
+  badgePending: { backgroundColor: AdminTheme.colorAmberSubtle },
   badgeText: { fontSize: 11, fontWeight: '800' },
 
   profileSection: {

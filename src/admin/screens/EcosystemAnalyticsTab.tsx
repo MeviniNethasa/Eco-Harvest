@@ -107,7 +107,7 @@ export default function EcosystemAnalyticsTab() {
           <View style={styles.metricCard}>
             <View style={styles.cardHeaderRow}>
               <Text style={styles.metricLabel}>Active Bulk Subscriptions</Text>
-              <View style={[styles.iconCircle, { backgroundColor: '#2E1065' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: AdminTheme.colorPurpleSubtle }]}>
                 <Ionicons name="sparkles" size={18} color={AdminTheme.colorPurple} />
               </View>
             </View>
@@ -118,12 +118,12 @@ export default function EcosystemAnalyticsTab() {
             </View>
           </View>
 
-          {/* Card 3: YOLOv8 Freshness Index */}
+          {/* Card 3: Freshness Quality Index */}
           <View style={styles.metricCard}>
             <View style={styles.cardHeaderRow}>
               <Text style={styles.metricLabel}>Mean Freshness Index</Text>
-              <View style={[styles.iconCircle, { backgroundColor: '#1E3A8A' }]}>
-                <Ionicons name="leaf" size={18} color={AdminTheme.colorInfoBlue} />
+              <View style={[styles.iconCircle, { backgroundColor: AdminTheme.colorEmeraldSubtle }]}>
+                <Ionicons name="leaf" size={18} color={AdminTheme.colorBrandEmerald} />
               </View>
             </View>
             <Text style={styles.metricValue}>{kpiSummary.meanFreshnessIndex}%</Text>
@@ -394,7 +394,7 @@ const styles = StyleSheet.create({
 
   deficitRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   deficitLabel: { color: AdminTheme.colorAlertCrimson, fontSize: 11, fontWeight: '700' },
-  deficitList: { color: '#FCA5A5', fontSize: 11 },
+  deficitList: { color: AdminTheme.colorAlertCrimson, fontSize: 11 },
   surplusRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   surplusText: { color: AdminTheme.colorBrandEmerald, fontSize: 11 },
 

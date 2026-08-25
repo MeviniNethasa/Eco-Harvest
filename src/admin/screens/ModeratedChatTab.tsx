@@ -419,7 +419,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: AdminTheme.bgSurfaceBorder,
   },
-  tableRowSelected: { backgroundColor: '#261B2E', borderColor: AdminTheme.colorAlertCrimson, borderWidth: 1 },
+  tableRowSelected: { backgroundColor: AdminTheme.colorCrimsonSubtle, borderColor: AdminTheme.colorAlertCrimson, borderWidth: 1 },
   ticketIdText: { color: AdminTheme.colorTextMain, fontSize: 12, fontWeight: '700' },
   timeText: { color: AdminTheme.colorTextDim, fontSize: 10 },
   buyerText: { color: AdminTheme.colorTextMain, fontSize: 11, fontWeight: '600' },
@@ -429,13 +429,13 @@ const styles = StyleSheet.create({
 
   severityBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' },
   severityHigh: { backgroundColor: AdminTheme.colorCrimsonSubtle },
-  severityMed: { backgroundColor: '#451A03' },
+  severityMed: { backgroundColor: AdminTheme.colorAmberSubtle },
   severityText: { fontSize: 10, fontWeight: '800' },
 
   statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, alignSelf: 'flex-start' },
   statusReleased: { backgroundColor: AdminTheme.colorEmeraldSubtle },
   statusBlocked: { backgroundColor: AdminTheme.colorCrimsonSubtle },
-  statusIntercepted: { backgroundColor: '#451A03' },
+  statusIntercepted: { backgroundColor: AdminTheme.colorAmberSubtle },
   statusBadgeText: { fontSize: 10, fontWeight: '800' },
 
   // Detail Card
@@ -449,25 +449,25 @@ const styles = StyleSheet.create({
   },
 
   offendingBanner: {
-    backgroundColor: '#3F1219',
+    backgroundColor: '#FEF2F2',
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: AdminTheme.colorAlertCrimson,
+    borderColor: '#FECACA',
     padding: 12,
     gap: 8,
   },
   bannerHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   bannerTitle: { color: AdminTheme.colorAlertCrimson, fontSize: 12, fontWeight: '700' },
   highlightedTextBox: {
-    backgroundColor: AdminTheme.bgAdminDark,
+    backgroundColor: AdminTheme.bgPanelDark,
     padding: 10,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: AdminTheme.bgSurfaceBorder,
   },
   crimsonHighlight: {
-    backgroundColor: 'rgba(239, 68, 68, 0.25)',
-    color: '#F87171',
+    backgroundColor: '#FEE2E2',
+    color: '#DC2626',
     fontWeight: '800',
     paddingHorizontal: 4,
     borderRadius: 3,
@@ -480,9 +480,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: AdminTheme.colorAlertCrimson,
+    borderColor: '#FCA5A5',
   },
-  termPillText: { color: '#FCA5A5', fontSize: 10, fontWeight: '700' },
+  termPillText: { color: '#B91C1C', fontSize: 10, fontWeight: '700' },
 
   threadTitle: { color: AdminTheme.colorTextMuted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
   chatThread: {
@@ -498,8 +498,8 @@ const styles = StyleSheet.create({
   bubbleBuyer: { alignSelf: 'flex-end' },
   bubbleSender: { color: AdminTheme.colorTextDim, fontSize: 10, fontWeight: '600' },
   chatBubble: { padding: 10, borderRadius: 8 },
-  chatBubbleFarmer: { backgroundColor: '#1E293B', borderWidth: 1, borderColor: AdminTheme.bgSurfaceBorder },
-  chatBubbleBuyer: { backgroundColor: '#064E3B', borderWidth: 1, borderColor: AdminTheme.colorBrandEmerald },
+  chatBubbleFarmer: { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: AdminTheme.bgSurfaceBorder },
+  chatBubbleBuyer: { backgroundColor: '#DCFCE7', borderWidth: 1, borderColor: '#86EFAC' },
   chatMessageText: { color: AdminTheme.colorTextMain, fontSize: 13, lineHeight: 18 },
 
   // Governance Action Bar

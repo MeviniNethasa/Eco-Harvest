@@ -821,22 +821,25 @@ export function buildVerificationRequestFromProfile(
  * to touch this storage key.
  */
 async function buildInitialVerificationRequests(): Promise<VerificationRequest[]> {
-  const samples = [SAMPLE_VALID_VERIFICATION_REQUEST, SAMPLE_SUSPICIOUS_VERIFICATION_REQUEST];
-
   try {
     const profile = await getFarmerProfile();
-    if (profile && profile.verificationStatus === 'PENDING_VERIFICATION') {
+    if (
+      profile &&
+      (profile.verificationStatus === 'PENDING_VERIFICATION' ||
+        profile.verificationStatus === 'VERIFIED' ||
+        profile.verificationStatus === 'REJECTED')
+    ) {
       const realRequest = buildVerificationRequestFromProfile(profile);
-      return [realRequest, ...samples];
+      return [realRequest];
     }
   } catch (error) {
     console.error(
-      'Failed to check for an existing farmer submission while seeding verification requests:',
+      'Failed to check for an existing farmer submission while loading verification requests:',
       error
     );
   }
 
-  return samples;
+  return [];
 }
 
 /**
