@@ -51,7 +51,7 @@ const SUBSCRIPTION_PLANS: {
   {
     value: 'STANDARD',
     label: 'Standard Retail Plan',
-    price: 'Free ($0)',
+    price: 'Free (LKR 0)',
     description: 'Everyday direct farm produce shopping with real-time delivery tracking.',
     isBulk: false,
   },

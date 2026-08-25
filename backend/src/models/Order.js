@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 
 const OrderItemSchema = new mongoose.Schema(
   {
-    cropId: { type: String, required: true },
+    cropId: { type: String, default: '' },
     name: { type: String, required: true },
     pricePerUnit: { type: Number, required: true },
     unit: { type: String, default: '1kg' },

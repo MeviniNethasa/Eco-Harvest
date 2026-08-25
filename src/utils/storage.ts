@@ -30,7 +30,7 @@ import {
   VerificationRequest,
 } from '../types';
 import { MOCK_CROPS, MOCK_FARMERS } from '../data/mockData';
-import { messageApi, orderApi } from '../services/api';
+import { messageApi, orderApi, stripeApi } from '../services/api';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
@@ -1446,18 +1446,26 @@ export async function createOrder(payment: PaymentDetails): Promise<Order> {
     const customerId = userProfile?.id || userProfile?.phoneNumber || 'cust_anonymous';
     const customerName = userProfile?.fullName ? `${userProfile.fullName} (${customerId})` : customerId;
     const farmerId = cart[0]?.farmerId || '';
-    const stripePaymentIntent = `pi_${order.id}`;
+    let stripePaymentIntent = '';
+    try {
+      const piRes = await stripeApi.createPaymentIntent(summary.grandTotal, 'lkr');
+      if (piRes && piRes.data && (piRes.data as any).id) {
+        stripePaymentIntent = (piRes.data as any).id;
+      }
+    } catch (piErr) {
+      console.log('Stripe live intent notice:', piErr);
+    }
 
     await orderApi.create({
       orderId: order.id,
       customerId: customerName,
       farmerId,
       items: cart.map((item) => ({
-        cropId: item.cropId,
+        cropId: item.cropId || '',
         name: item.name,
         quantity: item.quantity,
         pricePerUnit: item.pricePerUnit,
-        unit: item.unit,
+        unit: item.unit || '1kg',
         farmerId: item.farmerId || '',
         farmName: item.farmName,
         province: item.province || '',
@@ -1468,11 +1476,11 @@ export async function createOrder(payment: PaymentDetails): Promise<Order> {
         farmerId: g.items[0]?.farmerId || '',
         farmName: g.farmName,
         items: g.items.map((i) => ({
-          cropId: i.cropId,
+          cropId: i.cropId || '',
           name: i.name,
           quantity: i.quantity,
           pricePerUnit: i.pricePerUnit,
-          unit: i.unit,
+          unit: i.unit || '1kg',
           farmerId: i.farmerId || '',
           farmName: i.farmName,
         })),

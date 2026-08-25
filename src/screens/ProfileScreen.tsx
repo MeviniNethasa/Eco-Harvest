@@ -61,7 +61,7 @@ const SUBSCRIPTION_PLANS: {
   {
     value: 'STANDARD',
     label: 'Standard Plan',
-    price: 'Free ($0)',
+    price: 'Free (LKR 0)',
     description: 'Everyday retail shopping from verified local farms.',
   },
   {
