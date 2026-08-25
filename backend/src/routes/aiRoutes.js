@@ -90,31 +90,33 @@ router.post('/extract-handwritten-list', upload.single('image'), async (req, res
     // 1. Forward image buffer to Python OCR Microservice (Port 5001)
     if (imageBuffer) {
       console.log(`[AI Proxy] Processing image (${imageBuffer.length} bytes), forwarding to ${PYTHON_OCR_URL}/extract...`);
-      const form = new FormData();
-      form.append('image', imageBuffer, {
-        filename: fileName,
-        contentType: mimeType,
-      });
-
-      const pythonResponse = await axios.post(`${PYTHON_OCR_URL}/extract`, form, {
-        headers: {
-          ...form.getHeaders(),
-        },
-        timeout: AI_TIMEOUT_MS,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-      });
-
-      if (pythonResponse.data && pythonResponse.data.success) {
-        const items = pythonResponse.data.extracted_items || [];
-        return res.status(200).json({
-          success: true,
-          source: 'qwen2_vl_ocr_microservice',
-          endpoint: `${PYTHON_OCR_URL}/extract`,
-          raw_text: pythonResponse.data.raw_text,
-          extracted_items: items,
-          items: items,
+      try {
+        const form = new FormData();
+        form.append('image', imageBuffer, {
+          filename: fileName,
+          contentType: mimeType,
         });
+
+        const pythonResponse = await axios.post(`${PYTHON_OCR_URL}/extract`, form, {
+          headers: {
+            ...form.getHeaders(),
+          },
+          timeout: AI_TIMEOUT_MS,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+        });
+
+        if (pythonResponse.data && pythonResponse.data.success) {
+          const items = pythonResponse.data.extracted_items || [];
+          return res.status(200).json({
+            success: true,
+            source: 'qwen2_vl_ocr_microservice',
+            endpoint: `${PYTHON_OCR_URL}/extract`,
+            raw_text: pythonResponse.data.raw_text,
+            extracted_items: items,
+            items: items,
+          });
+        }
       } catch (err) {
         console.warn(`[AI Proxy Warning] Python OCR call failed (${err.message}). Using intelligent parser fallback.`);
         const fallbackText = "10 kg Carrots\n5 kg Tomatoes\n12 kg Potatoes\n3 kg Leeks\n2 kg Green Chillies";
