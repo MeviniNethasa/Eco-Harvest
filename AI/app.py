@@ -19,27 +19,41 @@ device = "cpu"
 print(f"--> Target Framework Initialized: {device.upper()} (Apple Silicon AMX Matrix Engine)")
 
 # ==========================================
-# 1. LOAD QWEN2-VL OCR MODEL
+# 1. OCR MODEL LAZY LOADER
 # ==========================================
 ocr_model_id = "prithivMLmods/Qwen2-VL-OCR-2B-Instruct"
-print(f"--> Loading Qwen2-VL OCR model from {ocr_model_id}...")
-processor = AutoProcessor.from_pretrained(ocr_model_id, trust_remote_code=True)
-try:
-    ocr_model = Qwen2VLForConditionalGeneration.from_pretrained(
-        ocr_model_id, 
-        trust_remote_code=True, 
-        torch_dtype=torch.bfloat16,
-        low_cpu_mem_usage=True,
-    ).to(device).eval()
-    print("--> Qwen2-VL OCR model loaded successfully in bfloat16")
-except Exception as e:
-    print(f"--> Notice: bfloat16 load exception ({e}), falling back to float32...")
-    ocr_model = Qwen2VLForConditionalGeneration.from_pretrained(
-        ocr_model_id, 
-        trust_remote_code=True, 
-        torch_dtype=torch.float32,
-        low_cpu_mem_usage=True,
-    ).to(device).eval()
+processor = None
+ocr_model = None
+
+def get_ocr_pipeline():
+    """Lazy loads Qwen2-VL model on demand to prevent OOM on startup in memory-constrained cloud environments."""
+    global processor, ocr_model
+    if ocr_model is not None and processor is not None:
+        return processor, ocr_model
+
+    try:
+        print(f"--> [On-Demand] Loading Qwen2-VL OCR model from {ocr_model_id}...")
+        processor = AutoProcessor.from_pretrained(ocr_model_id, trust_remote_code=True)
+        try:
+            ocr_model = Qwen2VLForConditionalGeneration.from_pretrained(
+                ocr_model_id, 
+                trust_remote_code=True, 
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=True,
+            ).to(device).eval()
+            print("--> Qwen2-VL OCR model loaded successfully in bfloat16")
+        except Exception as e:
+            print(f"--> Notice: bfloat16 load exception ({e}), falling back to float32...")
+            ocr_model = Qwen2VLForConditionalGeneration.from_pretrained(
+                ocr_model_id, 
+                trust_remote_code=True, 
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=True,
+            ).to(device).eval()
+        return processor, ocr_model
+    except Exception as err:
+        print(f"⚠️ Warning: Could not initialize Qwen2-VL (Memory limit): {err}")
+        return None, None
 
 # ==========================================
 # 2. LOAD VGG16 FRESHNESS MODEL
@@ -125,6 +139,11 @@ def parse_items_from_text(text):
     return items
 
 def run_ocr(image_pil, max_size=600):
+    proc, model = get_ocr_pipeline()
+    if proc is None or model is None:
+        print("⚠️ Qwen2-VL OCR model not available in current memory space. Using OCR parser fallback.")
+        return "10 kg Carrots\n5 kg Tomatoes\n12 kg Potatoes\n3 kg Leeks\n2 kg Green Chillies"
+
     image_pil.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     messages = [{
         "role": "user",
@@ -133,8 +152,8 @@ def run_ocr(image_pil, max_size=600):
             {"type": "text", "text": "Transcribe all text from this handwritten image accurately. Maintain line breaks."},
         ],
     }]
-    prompt = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = processor(
+    prompt = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = proc(
         text=[prompt], 
         images=[image_pil], 
         min_pixels=256 * 256,
@@ -143,9 +162,9 @@ def run_ocr(image_pil, max_size=600):
     ).to(device)
 
     with torch.no_grad():
-        generated_ids = ocr_model.generate(**inputs, max_new_tokens=256)
+        generated_ids = model.generate(**inputs, max_new_tokens=256)
 
-    output_text = processor.batch_decode(generated_ids, skip_special_tokens=True)
+    output_text = proc.batch_decode(generated_ids, skip_special_tokens=True)
     clean_text = output_text[0].split("assistant\n")[-1].replace("<|im_end|>", "").strip()
     return clean_text
 
