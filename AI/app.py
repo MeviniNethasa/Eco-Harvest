@@ -4,19 +4,17 @@ import re
 import sys
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import torch
 import numpy as np
 from PIL import Image
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 import keras
 
-# Prevent fork / tokenizers parallelism deadlocks and MPS memory mapping issues on macOS
+# Prevent fork / parallelism deadlocks and reduce memory usage on cloud containers
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 # --- TARGET FRAMEWORK INITIALIZATION ---
 device = "cpu"
-print(f"--> Target Framework Initialized: {device.upper()} (Apple Silicon AMX Matrix Engine)")
+print(f"--> Target Framework Initialized: {device.upper()}")
 
 # ==========================================
 # 1. OCR MODEL LAZY LOADER
@@ -32,6 +30,8 @@ def get_ocr_pipeline():
         return processor, ocr_model
 
     try:
+        import torch
+        from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
         print(f"--> [On-Demand] Loading Qwen2-VL OCR model from {ocr_model_id}...")
         processor = AutoProcessor.from_pretrained(ocr_model_id, trust_remote_code=True)
         try:
