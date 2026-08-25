@@ -12,9 +12,10 @@ import { Platform } from 'react-native';
  * - iOS Simulator / Expo Web: 127.0.0.1 resolves to the Mac host correctly.
  */
 const API_BASE_URL =
-  Platform.OS === 'android'
+  process.env.EXPO_PUBLIC_API_URL ||
+  (Platform.OS === 'android'
     ? 'http://10.0.2.2:5000/api'
-    : 'http://127.0.0.1:5000/api';
+    : 'http://127.0.0.1:5000/api');
 
 console.log(`[EcoHarvest API] Base URL: ${API_BASE_URL} (Platform: ${Platform.OS})`);
 
