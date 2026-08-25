@@ -206,6 +206,15 @@ def evaluate_vgg16_freshness(image_pil, crop_name="Organic Vegetable"):
 # ==========================================
 # HTTP ENDPOINTS
 # ==========================================
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({
+        "status": "online",
+        "service": "EcoHarvest-AI-Microservice",
+        "documentation": "/health",
+        "endpoints": ["/health", "/extract", "/assess-freshness"]
+    }), 200
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({
@@ -213,7 +222,7 @@ def health():
         "service": "EcoHarvest-AI-Microservice",
         "ocr_model": ocr_model_id,
         "vgg16_loaded": vgg16_model is not None,
-        "port": 5001
+        "port": int(os.environ.get("PORT", 5001))
     }), 200
 
 @app.route("/extract", methods=["POST"])
@@ -301,5 +310,5 @@ def assess_freshness():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
-    print(f"--> Starting EcoHarvest AI Unified Microservice on http://127.0.0.1:{port}...")
-    app.run(host="127.0.0.1", port=port, debug=False)
+    print(f"--> Starting EcoHarvest AI Unified Microservice on http://0.0.0.0:{port}...")
+    app.run(host="0.0.0.0", port=port, debug=False)
