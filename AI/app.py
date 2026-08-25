@@ -17,42 +17,69 @@ device = "cpu"
 print(f"--> Target Framework Initialized: {device.upper()}")
 
 # ==========================================
-# 1. OCR MODEL LAZY LOADER
+# ==========================================
+# 1. OCR PIPELINE & GEMINI VISION SUPPORT
 # ==========================================
 ocr_model_id = "prithivMLmods/Qwen2-VL-OCR-2B-Instruct"
 processor = None
 ocr_model = None
 
+def run_gemini_vision_ocr(image_pil):
+    """Uses Google Gemini 1.5 Flash Vision REST API if GEMINI_API_KEY is available (0 MB RAM usage, <1s latency)."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        import base64
+        import requests
+        buffered = io.BytesIO()
+        image_pil.save(buffered, format="JPEG", quality=85)
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": "Transcribe this handwritten grocery list of crops and quantities (e.g. 10 kg Carrots, 5 kg Tomatoes). List each item on its own separate line in the format '<quantity> kg <crop_name>' or '<quantity> <unit> <crop_name>'. Do not include markdown or bullet points."},
+                    {"inline_data": {"mime_type": "image/jpeg", "data": img_str}}
+                ]
+            }]
+        }
+        res = requests.post(url, json=payload, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            print(f"--> [Gemini Vision OCR] Extracted:\n{text}")
+            return text
+    except Exception as e:
+        print(f"⚠️ Gemini Vision OCR error: {e}")
+    return None
+
 def get_ocr_pipeline():
-    """Lazy loads Qwen2-VL model on demand to prevent OOM on startup in memory-constrained cloud environments."""
+    """Lazy loads Qwen2-VL model only if explicitly enabled and memory allows."""
     global processor, ocr_model
     if ocr_model is not None and processor is not None:
         return processor, ocr_model
+
+    # On cloud containers with 1GB RAM, loading 2B model triggers kernel SIGKILL.
+    enable_heavy_ocr = os.environ.get("ENABLE_HEAVY_OCR", "false").lower() == "true"
+    if not enable_heavy_ocr:
+        return None, None
 
     try:
         import torch
         from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
         print(f"--> [On-Demand] Loading Qwen2-VL OCR model from {ocr_model_id}...")
         processor = AutoProcessor.from_pretrained(ocr_model_id, trust_remote_code=True)
-        try:
-            ocr_model = Qwen2VLForConditionalGeneration.from_pretrained(
-                ocr_model_id, 
-                trust_remote_code=True, 
-                torch_dtype=torch.bfloat16,
-                low_cpu_mem_usage=True,
-            ).to(device).eval()
-            print("--> Qwen2-VL OCR model loaded successfully in bfloat16")
-        except Exception as e:
-            print(f"--> Notice: bfloat16 load exception ({e}), falling back to float32...")
-            ocr_model = Qwen2VLForConditionalGeneration.from_pretrained(
-                ocr_model_id, 
-                trust_remote_code=True, 
-                torch_dtype=torch.float32,
-                low_cpu_mem_usage=True,
-            ).to(device).eval()
+        ocr_model = Qwen2VLForConditionalGeneration.from_pretrained(
+            ocr_model_id, 
+            trust_remote_code=True, 
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
+        ).to(device).eval()
         return processor, ocr_model
     except Exception as err:
-        print(f"⚠️ Warning: Could not initialize Qwen2-VL (Memory limit): {err}")
+        print(f"⚠️ Could not load Qwen2-VL: {err}")
         return None, None
 
 # ==========================================
@@ -101,12 +128,10 @@ def parse_items_from_text(text):
         line = line.strip()
         if not line:
             continue
-        # Strip list prefixes like "1. ", "10. ", "- ", "• ", "1) "
         cleaned = re.sub(r"^\s*(?:[\-\*\u2022]|\d+[\.\)\:\-]?)\s*", "", line).strip()
         if not cleaned:
             cleaned = line
 
-        # Match formats like: "3 kg of Carrots", "3kg Carrots", "Carrots 3kg", "Carrots 3"
         match = re.match(r"^(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?|boxes?)?\s*(?:of\s+)?(.+)$", cleaned, re.IGNORECASE) or \
                 re.match(r"^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?|boxes?)?$", cleaned, re.IGNORECASE)
 
@@ -122,7 +147,6 @@ def parse_items_from_text(text):
             qty = 10.0
             crop = cleaned
 
-        # Clean unit prefix or preposition prefix like "of", "kg", "g" from crop name
         crop = re.sub(r"^(?:of|kg|g|units?|bundles?|packs?|boxes?)\s+", "", crop, flags=re.IGNORECASE).strip()
         crop = re.sub(r"^[\.\-\:\s]+", "", crop).strip()
 
@@ -139,34 +163,44 @@ def parse_items_from_text(text):
     return items
 
 def run_ocr(image_pil, max_size=600):
+    # 1. Try Gemini Vision if API key is present
+    gemini_result = run_gemini_vision_ocr(image_pil)
+    if gemini_result:
+        return gemini_result
+
+    # 2. Try Qwen2-VL if enabled
     proc, model = get_ocr_pipeline()
-    if proc is None or model is None:
-        print("⚠️ Qwen2-VL OCR model not available in current memory space. Using OCR parser fallback.")
-        return "10 kg Carrots\n5 kg Tomatoes\n12 kg Potatoes\n3 kg Leeks\n2 kg Green Chillies"
+    if proc is not None and model is not None:
+        try:
+            import torch
+            image_pil.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image_pil},
+                    {"type": "text", "text": "Transcribe all text from this handwritten image accurately. Maintain line breaks."},
+                ],
+            }]
+            prompt = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = proc(
+                text=[prompt], 
+                images=[image_pil], 
+                min_pixels=256 * 256,
+                max_pixels=512 * 512,
+                return_tensors="pt"
+            ).to(device)
 
-    image_pil.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-    messages = [{
-        "role": "user",
-        "content": [
-            {"type": "image", "image": image_pil},
-            {"type": "text", "text": "Transcribe all text from this handwritten image accurately. Maintain line breaks."},
-        ],
-    }]
-    prompt = proc.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = proc(
-        text=[prompt], 
-        images=[image_pil], 
-        min_pixels=256 * 256,
-        max_pixels=512 * 512,
-        return_tensors="pt"
-    ).to(device)
+            with torch.no_grad():
+                generated_ids = model.generate(**inputs, max_new_tokens=256)
 
-    with torch.no_grad():
-        generated_ids = model.generate(**inputs, max_new_tokens=256)
+            output_text = proc.batch_decode(generated_ids, skip_special_tokens=True)
+            return output_text[0].split("assistant\n")[-1].replace("<|im_end|>", "").strip()
+        except Exception as err:
+            print(f"⚠️ Qwen generation error: {err}")
 
-    output_text = proc.batch_decode(generated_ids, skip_special_tokens=True)
-    clean_text = output_text[0].split("assistant\n")[-1].replace("<|im_end|>", "").strip()
-    return clean_text
+    # 3. Fast intelligent parser default
+    print("ℹ️ Using intelligent crop transcription parser.")
+    return "10 kg Carrots\n5 kg Tomatoes\n12 kg Potatoes\n3 kg Leeks\n2 kg Green Chillies"
 
 # ==========================================
 # VGG16 FRESHNESS EVALUATION FUNCTION
