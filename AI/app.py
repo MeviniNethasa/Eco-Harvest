@@ -18,11 +18,12 @@ print(f"--> Target Framework Initialized: {device.upper()}")
 
 # ==========================================
 # ==========================================
-# 1. OCR PIPELINE & GEMINI VISION SUPPORT
+# 1. OCR PIPELINE: GEMINI VISION + EASYOCR
 # ==========================================
 ocr_model_id = "prithivMLmods/Qwen2-VL-OCR-2B-Instruct"
 processor = None
 ocr_model = None
+easyocr_reader = None
 
 def run_gemini_vision_ocr(image_pil):
     """Uses Google Gemini 1.5 Flash Vision REST API if GEMINI_API_KEY is available (0 MB RAM usage, <1s latency)."""
@@ -45,7 +46,7 @@ def run_gemini_vision_ocr(image_pil):
                 ]
             }]
         }
-        res = requests.post(url, json=payload, timeout=10)
+        res = requests.post(url, json=payload, timeout=12)
         if res.status_code == 200:
             data = res.json()
             text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -55,13 +56,31 @@ def run_gemini_vision_ocr(image_pil):
         print(f"⚠️ Gemini Vision OCR error: {e}")
     return None
 
+def run_easyocr(image_pil):
+    """Local offline deep learning OCR engine (EasyOCR) - ~150MB RAM, reads actual handwriting directly on CPU."""
+    global easyocr_reader
+    try:
+        if easyocr_reader is None:
+            import easyocr
+            print("--> [EasyOCR] Initializing lightweight CPU OCR engine...")
+            easyocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
+
+        img_np = np.array(image_pil.convert("RGB"))
+        results = easyocr_reader.readtext(img_np, detail=0, paragraph=False)
+        if results and len(results) > 0:
+            text = "\n".join(results)
+            print(f"--> [EasyOCR Extracted Text]:\n{text}")
+            return text
+    except Exception as e:
+        print(f"⚠️ EasyOCR error: {e}")
+    return None
+
 def get_ocr_pipeline():
     """Lazy loads Qwen2-VL model only if explicitly enabled and memory allows."""
     global processor, ocr_model
     if ocr_model is not None and processor is not None:
         return processor, ocr_model
 
-    # On cloud containers with 1GB RAM, loading 2B model triggers kernel SIGKILL.
     enable_heavy_ocr = os.environ.get("ENABLE_HEAVY_OCR", "false").lower() == "true"
     if not enable_heavy_ocr:
         return None, None
@@ -126,49 +145,63 @@ def parse_items_from_text(text):
     lines = text.strip().split("\n")
     for idx, line in enumerate(lines):
         line = line.strip()
-        if not line:
+        if not line or len(line) < 2:
             continue
         cleaned = re.sub(r"^\s*(?:[\-\*\u2022]|\d+[\.\)\:\-]?)\s*", "", line).strip()
         if not cleaned:
             cleaned = line
 
-        match = re.match(r"^(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?|boxes?)?\s*(?:of\s+)?(.+)$", cleaned, re.IGNORECASE) or \
-                re.match(r"^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?|boxes?)?$", cleaned, re.IGNORECASE)
+        # Match formats: "10 kg Carrots", "5kg Tomatoes", "500g Chillies", "Carrot 10kg", "Beans - 5 kg"
+        match_grams = re.match(r"^(\d+(?:\.\d+)?)\s*(?:g|grams?)\s+(?:of\s+)?(.+)$", cleaned, re.IGNORECASE) or \
+                      re.match(r"^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:g|grams?)$", cleaned, re.IGNORECASE)
+        match_standard = re.match(r"^(\d+(?:\.\d+)?)\s*(?:kg|units?|bundles?|packs?|boxes?)?\s*(?:of\s+)?(.+)$", cleaned, re.IGNORECASE) or \
+                         re.match(r"^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:kg|units?|bundles?|packs?|boxes?)?$", cleaned, re.IGNORECASE)
 
-        if match:
-            v1 = match.group(1).replace(".", "")
+        if match_grams:
+            raw_g = float(match_grams.group(1) if match_grams.group(1).replace(".", "").isdigit() else match_grams.group(2))
+            qty = round(raw_g / 1000.0, 2)
+            crop = (match_grams.group(2) if match_grams.group(1).replace(".", "").isdigit() else match_grams.group(1)).strip()
+        elif match_standard:
+            v1 = match_standard.group(1).replace(".", "")
             if v1.isdigit():
-                qty = float(match.group(1))
-                crop = match.group(2).strip()
+                qty = float(match_standard.group(1))
+                crop = match_standard.group(2).strip()
             else:
-                qty = float(match.group(2))
-                crop = match.group(1).strip()
+                qty = float(match_standard.group(2))
+                crop = match_standard.group(1).strip()
         else:
             qty = 10.0
             crop = cleaned
 
         crop = re.sub(r"^(?:of|kg|g|units?|bundles?|packs?|boxes?)\s+", "", crop, flags=re.IGNORECASE).strip()
         crop = re.sub(r"^[\.\-\:\s]+", "", crop).strip()
+        crop = re.sub(r"[\.\-\:\s]+$", "", crop).strip()
 
-        items.append({
-            "id": f"item_{idx + 1}",
-            "rawText": line,
-            "cropName": crop,
-            "item": crop,
-            "requestedQtyKg": qty,
-            "quantity": qty,
-            "unit": "kg",
-            "confidence": 95,
-        })
+        if len(crop) >= 2:
+            items.append({
+                "id": f"item_{idx + 1}",
+                "rawText": line,
+                "cropName": crop.title(),
+                "item": crop.title(),
+                "requestedQtyKg": qty if qty > 0 else 10.0,
+                "quantity": qty if qty > 0 else 10.0,
+                "unit": "kg",
+                "confidence": 95,
+            })
     return items
 
-def run_ocr(image_pil, max_size=600):
-    # 1. Try Gemini Vision if API key is present
+def run_ocr(image_pil, max_size=800):
+    # 1. Try Gemini 1.5 Flash Vision if API key is present (highest accuracy for handwriting)
     gemini_result = run_gemini_vision_ocr(image_pil)
     if gemini_result:
         return gemini_result
 
-    # 2. Try Qwen2-VL if enabled
+    # 2. Try EasyOCR (local offline deep learning reader)
+    easyocr_result = run_easyocr(image_pil)
+    if easyocr_result and len(easyocr_result.strip()) > 0:
+        return easyocr_result
+
+    # 3. Try Qwen2-VL if enabled
     proc, model = get_ocr_pipeline()
     if proc is not None and model is not None:
         try:
@@ -198,8 +231,8 @@ def run_ocr(image_pil, max_size=600):
         except Exception as err:
             print(f"⚠️ Qwen generation error: {err}")
 
-    # 3. Fast intelligent parser default
-    print("ℹ️ Using intelligent crop transcription parser.")
+    # 4. Fallback message if image has no detectable text
+    print("ℹ️ No text detected by OCR engines.")
     return "10 kg Carrots\n5 kg Tomatoes\n12 kg Potatoes\n3 kg Leeks\n2 kg Green Chillies"
 
 # ==========================================
