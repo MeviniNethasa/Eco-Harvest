@@ -26,7 +26,7 @@ ocr_model = None
 easyocr_reader = None
 
 def run_gemini_vision_ocr(image_pil):
-    """Uses Google Gemini 1.5 Flash Vision REST API if GEMINI_API_KEY is available (0 MB RAM usage, <1s latency)."""
+    """Uses Google Gemini 3.5 Flash Lite Vision REST API if GEMINI_API_KEY is available (0 MB RAM usage, ~1-2s latency)."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return None
@@ -37,7 +37,7 @@ def run_gemini_vision_ocr(image_pil):
         image_pil.save(buffered, format="JPEG", quality=85)
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={api_key}"
         payload = {
             "contents": [{
                 "parts": [
@@ -46,7 +46,7 @@ def run_gemini_vision_ocr(image_pil):
                 ]
             }]
         }
-        res = requests.post(url, json=payload, timeout=12)
+        res = requests.post(url, json=payload, timeout=30)
         if res.status_code == 200:
             data = res.json()
             text = data["candidates"][0]["content"]["parts"][0]["text"].strip()

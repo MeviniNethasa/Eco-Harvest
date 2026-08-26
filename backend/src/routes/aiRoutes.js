@@ -106,7 +106,7 @@ async function extractWithGeminiVision(imageBuffer, mimeType = 'image/jpeg') {
 
   try {
     const base64Image = imageBuffer.toString('base64');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`;
 
     const prompt = `You are an expert AI OCR reader for agricultural produce and market lists.
 Transcribe all handwritten grocery/crop items and quantities from this image.
@@ -137,7 +137,7 @@ Do not include markdown or bullet points.`;
           },
         ],
       },
-      { timeout: 15000 }
+      { timeout: 30000 }
     );
 
     const candidates = response.data?.candidates;
