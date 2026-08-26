@@ -74,6 +74,70 @@ router.get('/health', async (req, res) => {
   }
 });
 
+// Helper to extract handwritten list using Gemini 1.5/2.0 Flash Vision
+async function extractWithGeminiVision(imageBuffer, mimeType = 'image/jpeg') {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const base64Image = imageBuffer.toString('base64');
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const prompt = `You are an expert AI OCR reader for agricultural produce and market lists.
+Transcribe all handwritten grocery/crop items and quantities from this image.
+Format your output as a simple list where each item is on its own line:
+<quantity> kg <crop_name>
+Example:
+10 kg Carrots
+5 kg Tomatoes
+500 g Green Chillies
+2 packs Spinach
+
+Do not include markdown or bullet points.`;
+
+    const response = await axios.post(
+      url,
+      {
+        contents: [
+          {
+            parts: [
+              { text: prompt },
+              {
+                inline_data: {
+                  mime_type: mimeType || 'image/jpeg',
+                  data: base64Image,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      { timeout: 15000 }
+    );
+
+    const candidates = response.data?.candidates;
+    if (candidates && candidates.length > 0) {
+      const text = candidates[0]?.content?.parts?.[0]?.text?.trim() || '';
+      console.log(`[Gemini Vision Raw Output]:\n${text}`);
+      if (text) {
+        const items = parseGroceryItems(text);
+        if (items.length > 0) {
+          return {
+            success: true,
+            source: 'gemini_vision_api',
+            raw_text: text,
+            extracted_items: items,
+            items: items,
+          };
+        }
+      }
+    }
+  } catch (error) {
+    console.error(`[Gemini Vision Error]:`, error.response?.data || error.message);
+  }
+  return null;
+}
+
 // POST /api/ai/extract-handwritten-list
 router.post('/extract-handwritten-list', upload.single('image'), async (req, res) => {
   try {
@@ -87,8 +151,14 @@ router.post('/extract-handwritten-list', upload.single('image'), async (req, res
       imageBuffer = Buffer.from(cleanBase64, 'base64');
     }
 
-    // 1. Forward image buffer to Python OCR Microservice (Port 5001)
     if (imageBuffer) {
+      // 1. Try direct Gemini Vision first if GEMINI_API_KEY is configured
+      const geminiResult = await extractWithGeminiVision(imageBuffer, mimeType);
+      if (geminiResult) {
+        return res.status(200).json(geminiResult);
+      }
+
+      // 2. Forward image buffer to Python OCR Microservice (EasyOCR / Gemini)
       console.log(`[AI Proxy] Processing image (${imageBuffer.length} bytes), forwarding to ${PYTHON_OCR_URL}/extract...`);
       try {
         const form = new FormData();
@@ -110,7 +180,7 @@ router.post('/extract-handwritten-list', upload.single('image'), async (req, res
           const items = pythonResponse.data.extracted_items || [];
           return res.status(200).json({
             success: true,
-            source: 'qwen2_vl_ocr_microservice',
+            source: pythonResponse.data.source || 'python_ocr_microservice',
             endpoint: `${PYTHON_OCR_URL}/extract`,
             raw_text: pythonResponse.data.raw_text,
             extracted_items: items,
