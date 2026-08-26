@@ -550,31 +550,6 @@ export default function ProfileScreen() {
     }
   };
 
-  // Switch role action
-  const handleSwitchMode = async (targetMode: AppMode) => {
-    try {
-      await setActiveMode(targetMode);
-      setActiveModeState(targetMode);
-    } catch (err) {
-      console.error('Failed to switch active mode:', err);
-    }
-  };
-
-  const handleHeaderAction = () => {
-    if (customerProfile && !farmerProfile) {
-      navigation.navigate('FarmerOnboarding');
-      return;
-    }
-    if (!customerProfile && farmerProfile) {
-      openRegisterModal();
-      return;
-    }
-    if (customerProfile && farmerProfile) {
-      const nextMode: AppMode = activeMode === 'customer' ? 'farmer' : 'customer';
-      handleSwitchMode(nextMode);
-    }
-  };
-
   // Sign In action (Full Name + Password)
   const handleSignIn = async () => {
     if (!signInFullName.trim()) {
@@ -729,58 +704,6 @@ export default function ProfileScreen() {
   const isPhase2CustomerOnly = customerProfile !== null && farmerProfile === null;
   const isPhase2FarmerOnly = farmerProfile !== null && customerProfile === null;
   const isPhase3DualRole = customerProfile !== null && farmerProfile !== null;
-
-  const renderHeaderRight = () => {
-    if (isPhase1) return null;
-
-    if (isPhase2CustomerOnly) {
-      return (
-        <Pressable
-          style={styles.headerActionButton}
-          onPress={handleHeaderAction}
-          accessibilityRole="button"
-          accessibilityLabel="Switch to Farmer Mode"
-        >
-          <Ionicons name="leaf-outline" size={16} color={tokens.colorPrimaryGreen} />
-          <Text style={styles.headerActionButtonText}>Farmer Mode</Text>
-        </Pressable>
-      );
-    }
-
-    if (isPhase2FarmerOnly) {
-      return (
-        <Pressable
-          style={styles.headerActionButton}
-          onPress={handleHeaderAction}
-          accessibilityRole="button"
-          accessibilityLabel="Switch to Customer Mode"
-        >
-          <Ionicons name="person-outline" size={16} color={tokens.colorPrimaryGreen} />
-          <Text style={styles.headerActionButtonText}>Customer Mode</Text>
-        </Pressable>
-      );
-    }
-
-    if (isPhase3DualRole) {
-      const targetLabel = activeMode === 'customer' ? 'Farmer Mode' : 'Customer Mode';
-      const targetIcon = activeMode === 'customer' ? 'leaf-outline' : 'person-outline';
-
-      return (
-        <Pressable
-          style={styles.headerActionButton}
-          onPress={handleHeaderAction}
-          accessibilityRole="button"
-          accessibilityLabel={`Switch to ${targetLabel}`}
-        >
-          <Ionicons name={targetIcon} size={16} color={tokens.colorPrimaryGreen} />
-          <Text style={styles.headerActionButtonText}>{targetLabel}</Text>
-          <Ionicons name="swap-horizontal-outline" size={14} color={tokens.colorPrimaryGreen} style={{ marginLeft: 2 }} />
-        </Pressable>
-      );
-    }
-
-    return null;
-  };
 
   // Render Customer Profile Details Card
   const renderCustomerProfileCard = () => {
@@ -939,7 +862,6 @@ export default function ProfileScreen() {
               : 'Customer Account'
         }
         showNotificationBell={activeMode === 'farmer'}
-        rightElement={renderHeaderRight()}
       />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
