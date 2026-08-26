@@ -21,33 +21,58 @@ const AI_TIMEOUT_MS = 180000; // 3-minute timeout to comfortably accommodate CPU
 function parseGroceryItems(text) {
   if (!text || typeof text !== 'string') return [];
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-  return lines.map((line, idx) => {
-    const cleaned = line.replace(/^[\-\*\u2022\d\.\)\:\s]+/, '').trim() || line;
-    let qty = 10;
-    let name = cleaned;
+  return lines
+    .map((line, idx) => {
+      // Strip leading bullet points or numbered lists like "1. ", "1) ", "- ", "• "
+      const cleaned = line
+        .replace(/^[\-\*\u2022\s]+/, '')
+        .replace(/^\d+[\.\)\:]\s+/, '')
+        .trim() || line;
 
-    const m1 = /^(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?)?\s+(?:of\s+)?(.+)$/i.exec(cleaned);
-    const m2 = /^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:kg|g|units?|bundles?|packs?)?$/i.exec(cleaned);
+      let qty = 10;
+      let name = cleaned;
 
-    if (m1) {
-      qty = parseFloat(m1[1]);
-      name = m1[2].replace(/^(?:of|kg|g|units?|bundles?|packs?)\s+/i, '').trim();
-    } else if (m2) {
-      qty = parseFloat(m2[2]);
-      name = m2[1].trim();
-    }
+      // Handle grams (e.g. "500g chillies" -> 0.5 kg)
+      const mGrams1 = /^(\d+(?:\.\d+)?)\s*(?:g|grams?)\s+(?:of\s+)?(.+)$/i.exec(cleaned);
+      const mGrams2 = /^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:g|grams?)$/i.exec(cleaned);
 
-    return {
-      id: `item_${idx + 1}`,
-      rawText: line,
-      cropName: name,
-      item: name,
-      quantity: qty || 10,
-      requestedQtyKg: qty || 10,
-      unit: 'kg',
-      confidence: 95,
-    };
-  });
+      if (mGrams1) {
+        const val = parseFloat(mGrams1[1]);
+        qty = isNaN(val) ? 0.5 : Math.round((val / 1000) * 100) / 100;
+        name = mGrams1[2].replace(/^(?:of|g|grams?)\s+/i, '').trim();
+      } else if (mGrams2) {
+        const val = parseFloat(mGrams2[2]);
+        qty = isNaN(val) ? 0.5 : Math.round((val / 1000) * 100) / 100;
+        name = mGrams2[1].trim();
+      } else {
+        const m1 = /^(\d+(?:\.\d+)?)\s*(?:kg|units?|bundles?|packs?|boxes?)?\s*(?:of\s+)?(.+)$/i.exec(cleaned);
+        const m2 = /^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:kg|units?|bundles?|packs?|boxes?)?$/i.exec(cleaned);
+
+        if (m1 && !isNaN(parseFloat(m1[1]))) {
+          qty = parseFloat(m1[1]);
+          name = m1[2].replace(/^(?:of|kg|units?|bundles?|packs?)\s+/i, '').trim();
+        } else if (m2 && !isNaN(parseFloat(m2[2]))) {
+          qty = parseFloat(m2[2]);
+          name = m2[1].trim();
+        }
+      }
+
+      name = name.replace(/^[\.\-\:\s]+/, '').replace(/[\.\-\:\s]+$/, '').trim();
+      if (!name || name.length < 2) return null;
+
+      const formattedName = name.charAt(0).toUpperCase() + name.slice(1);
+      return {
+        id: `item_${idx + 1}`,
+        rawText: line,
+        cropName: formattedName,
+        item: formattedName,
+        quantity: qty || 10,
+        requestedQtyKg: qty || 10,
+        unit: 'kg',
+        confidence: 98,
+      };
+    })
+    .filter(Boolean);
 }
 
 // GET /api/ai/health

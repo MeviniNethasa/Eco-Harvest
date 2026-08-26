@@ -217,11 +217,12 @@ export default function BulkOrdersScreen() {
         }));
 
         // 2. Add AI Agent's Extraction Card message
+        const sourceName = (result as any).source === 'gemini_vision_api' ? 'Gemini Vision AI' : 'AI Vision OCR';
         const agentMsg: ChatMessage = {
           id: `agent_${Date.now()}`,
           sender: 'AGENT',
           timestamp: new Date().toISOString(),
-          text: `I parsed ${parsedList.length} handwritten item(s) with Qwen2-VL OCR. You can adjust the quantities or names below before matching with verified farms:`,
+          text: `I parsed ${parsedList.length} handwritten item(s) with ${sourceName}. You can adjust the quantities or names below before matching with verified farms:`,
           isExtractionCard: true,
           items: parsedList,
         };
