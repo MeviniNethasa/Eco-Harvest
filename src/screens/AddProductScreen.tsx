@@ -21,16 +21,16 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 
-import { CropCategory, FarmerProfile, FarmerTabParamList } from '../types';
+import { CropCategory, FarmerProfile, MyProductsStackParamList } from '../types';
 import { getFarmerProfile, publishCrop } from '../utils/storage';
 import { productApi } from '../services/api';
 import StandardHeader from '../components/StandardHeader';
 
-type NavProp = BottomTabNavigationProp<FarmerTabParamList, 'AddProduct'>;
+type NavProp = NativeStackNavigationProp<MyProductsStackParamList, 'AddProduct'>;
 
 const CATEGORIES: CropCategory[] = ['Vegetables', 'Fruits', 'Grains', 'Spices'];
 
@@ -179,7 +179,7 @@ export default function AddProductScreen() {
       setSelectedImageUri(null);
 
       Alert.alert('Published', `${form.name.trim()} is now live on the marketplace.`, [
-        { text: 'View My Products', onPress: () => navigation.navigate('MyProducts') },
+        { text: 'View My Products', onPress: () => navigation.navigate('MyProductsHome') },
         { text: 'Add Another', style: 'cancel' },
       ]);
     } catch (error) {
@@ -204,7 +204,7 @@ export default function AddProductScreen() {
       >
         <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.formCard}>
-            <Field label="Product Name">
+            <Field label="Product Name *">
               <TextInput
                 style={styles.input}
                 placeholder="e.g. Organic Carrots"
@@ -214,7 +214,7 @@ export default function AddProductScreen() {
               />
             </Field>
 
-            <Field label="Category">
+            <Field label="Category *">
               <View style={styles.chipRow}>
                 {CATEGORIES.map((cat) => (
                   <Pressable
@@ -231,7 +231,7 @@ export default function AddProductScreen() {
             </Field>
 
             <View style={styles.row}>
-              <Field label="Price (LKR)" style={{ flex: 1 }}>
+              <Field label="Price (LKR) *" style={{ flex: 1 }}>
                 <TextInput
                   style={styles.input}
                   placeholder="250"
@@ -241,7 +241,7 @@ export default function AddProductScreen() {
                   onChangeText={(v) => updateField('pricePerUnit', v)}
                 />
               </Field>
-              <Field label="Unit" style={{ flex: 1 }}>
+              <Field label="Unit *" style={{ flex: 1 }}>
                 <TextInput
                   style={styles.input}
                   placeholder="1kg"

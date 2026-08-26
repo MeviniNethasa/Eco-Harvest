@@ -13,6 +13,7 @@ import {
   CombinedTabParamList,
   FarmerProfile,
   MarketplaceStackParamList,
+  MyProductsStackParamList,
   OrdersStackParamList,
   SubscriptionPlan,
 } from '../types';
@@ -33,6 +34,7 @@ import OrdersScreen from '../screens/OrdersScreen';
 import DeliveryTrackingScreen from '../screens/DeliveryTrackingScreen';
 import BulkOrdersScreen from '../screens/BulkOrdersScreen';
 import ChatScreen from '../screens/ChatScreen';
+import FarmerDashboardScreen from '../screens/FarmerDashboardScreen';
 import MyProductsScreen from '../screens/MyProductsScreen';
 import AddProductScreen from '../screens/AddProductScreen';
 import FarmerOrdersScreen from '../screens/FarmerOrdersScreen';
@@ -45,6 +47,22 @@ import RegisterCustomerScreen from '../screens/RegisterCustomerScreen';
 // set depending on `activeMode`, without unmounting/remounting
 // `NavigationContainer` on every switch (see `TabNavigator` below).
 const Tab = createBottomTabNavigator<CombinedTabParamList>();
+
+// --- My Products Stack (List -> Publish/Add Product) ---
+const MyProductsStack = createNativeStackNavigator<MyProductsStackParamList>();
+
+function MyProductsStackNavigator() {
+  return (
+    <MyProductsStack.Navigator screenOptions={{ headerShown: false }}>
+      <MyProductsStack.Screen name="MyProductsHome" component={MyProductsScreen} />
+      <MyProductsStack.Screen
+        name="AddProduct"
+        component={AddProductScreen}
+        options={{ headerShown: false }}
+      />
+    </MyProductsStack.Navigator>
+  );
+}
 
 // Screen M-02 isn't a top-level tab per the design spec ("Accessible via the
 // App Navigation stack — e.g. Profile / Switch to Farmer Mode or dedicated
@@ -244,9 +262,21 @@ export default function TabNavigator() {
         {activeMode === 'farmer' ? (
           <>
             {/* --- Farmer Mode bar (FarmerTabParamList) --- */}
+            {/* 1. Dashboard (Analytics & Forecasting) */}
+            <Tab.Screen
+              name="Dashboard"
+              component={FarmerDashboardScreen}
+              options={{
+                title: 'Dashboard',
+                tabBarIcon: ({ color, size }) => (
+                  <Ionicons name="grid-outline" size={size} color={color} />
+                ),
+              }}
+            />
+            {/* 2. My Products (Stack containing My Products + Publish Product) */}
             <Tab.Screen
               name="MyProducts"
-              component={MyProductsScreen}
+              component={MyProductsStackNavigator}
               options={{
                 title: 'My Products',
                 tabBarIcon: ({ color, size }) => (
@@ -254,19 +284,7 @@ export default function TabNavigator() {
                 ),
               }}
             />
-            <Tab.Screen
-              name="AddProduct"
-              component={AddProductScreen}
-              options={{
-                title: 'Add Product',
-                tabBarIcon: ({ color, size }) => (
-                  <Ionicons name="add-circle-outline" size={size} color={color} />
-                ),
-              }}
-            />
-            {/* Incoming customer orders for this farm — distinct component
-                from Customer Mode's OrdersStackNavigator below, but reuses
-                the "Orders" tab name/icon convention. */}
+            {/* 3. Orders */}
             <Tab.Screen
               name="FarmerOrders"
               component={FarmerOrdersScreen}
@@ -277,28 +295,24 @@ export default function TabNavigator() {
                 ),
               }}
             />
-            {/* Screen M-06, surfaced as its own always-visible tab in
-                Farmer Mode (see `FarmerTabParamList.Messages` in
-                src/types/index.ts) rather than the hidden root route
-                Customer Mode uses below. `userRole: 'FARMER'` renders
-                ChatScreen from the farm's side of the conversation. */}
+            {/* 4. Messages */}
             <Tab.Screen
               name="Messages"
               component={ChatScreen}
               initialParams={{ userRole: 'FARMER' }}
               options={{
+                title: 'Messages',
                 tabBarIcon: ({ color, size }) => (
                   <Ionicons name="chatbubble-outline" size={size} color={color} />
                 ),
               }}
             />
-            {/* Same ProfileStackNavigator as Customer Mode — ProfileScreen
-                itself reads the active mode and renders the Farmer variant
-                (farm details + "Switch to Customer Mode"). */}
+            {/* 5. Profile */}
             <Tab.Screen
               name="Profile"
               component={ProfileStackNavigator}
               options={{
+                title: 'Profile',
                 tabBarIcon: ({ color, size }) => (
                   <Ionicons name="person-outline" size={size} color={color} />
                 ),

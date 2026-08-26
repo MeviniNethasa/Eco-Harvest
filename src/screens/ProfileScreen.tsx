@@ -60,14 +60,14 @@ const SUBSCRIPTION_PLANS: {
 }[] = [
   {
     value: 'STANDARD',
-    label: 'Standard Plan',
+    label: 'EcoHarvest free plan',
     price: 'Free (LKR 0)',
     description: 'Everyday retail shopping from verified local farms.',
   },
   {
     value: 'BULK_ACCESS',
-    label: 'Bulk Order Access',
-    price: 'LKR 9,500 / mo',
+    label: 'EcoHarvest pro plan',
+    price: 'LKR 500 / mo',
     description: 'Unlocks the AI Bulk Orders workspace for recurring volume orders.',
   },
 ];
@@ -659,8 +659,8 @@ export default function ProfileScreen() {
             <View style={styles.planBadge}>
               <Text style={styles.planBadgeText}>
                 {customerProfile.subscriptionPlan === 'BULK_ACCESS'
-                  ? 'Bulk Order Access'
-                  : 'Standard Plan'}
+                  ? 'EcoHarvest pro plan'
+                  : 'EcoHarvest free plan'}
               </Text>
             </View>
           </View>
@@ -838,7 +838,7 @@ export default function ProfileScreen() {
             </View>
 
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Field label="Full Name" error={formErrors.fullName}>
+              <Field label="Full Name *" error={formErrors.fullName}>
                 <TextInput
                   style={styles.input}
                   placeholder="Enter your full name"
@@ -848,7 +848,7 @@ export default function ProfileScreen() {
                 />
               </Field>
 
-              <Field label="Phone Number" error={formErrors.phoneNumber}>
+              <Field label="Phone Number *" error={formErrors.phoneNumber}>
                 <TextInput
                   style={styles.input}
                   placeholder="07X XXXXXXX"
@@ -862,7 +862,7 @@ export default function ProfileScreen() {
 
               {/* Structured Cascading Location Pickers */}
               <DropdownField
-                label="Province"
+                label="Province *"
                 value={customerProvince}
                 placeholder="Select Province"
                 options={PROVINCES}
@@ -874,7 +874,7 @@ export default function ProfileScreen() {
               />
 
               <DropdownField
-                label="District"
+                label="District *"
                 value={customerDistrict}
                 placeholder="Select District"
                 options={getDistricts(customerProvince)}
@@ -886,7 +886,7 @@ export default function ProfileScreen() {
               />
 
               <DropdownField
-                label="City"
+                label="City *"
                 value={customerCity}
                 placeholder="Select City"
                 options={getCities(customerProvince, customerDistrict)}
@@ -951,8 +951,8 @@ export default function ProfileScreen() {
         visible={isStripeModalVisible}
         onClose={() => setIsStripeModalVisible(false)}
         onSuccess={() => commitSaveCustomerProfile('BULK_ACCESS')}
-        planTitle="Bulk Order Access Plan"
-        planPrice="LKR 9,500 / month"
+        planTitle="EcoHarvest pro plan"
+        planPrice="LKR 500 / month"
         description="Unlocks the AI Bulk Orders workspace for recurring volume orders."
       />
 
@@ -979,7 +979,7 @@ export default function ProfileScreen() {
             </View>
 
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Field label="Legal Name" error={farmerErrors.legalName}>
+              <Field label="Legal Name *" error={farmerErrors.legalName}>
                 <TextInput
                   style={styles.input}
                   placeholder="Enter full legal name"
@@ -988,7 +988,7 @@ export default function ProfileScreen() {
                 />
               </Field>
 
-              <Field label="Mobile Number" error={farmerErrors.mobileNumber}>
+              <Field label="Mobile Number *" error={farmerErrors.mobileNumber}>
                 <TextInput
                   style={styles.input}
                   placeholder="07X XXXXXXX"
@@ -998,7 +998,7 @@ export default function ProfileScreen() {
                 />
               </Field>
 
-              <Field label="Farm Name" error={farmerErrors.farmName}>
+              <Field label="Farm Name *" error={farmerErrors.farmName}>
                 <TextInput
                   style={styles.input}
                   placeholder="Enter farm name"
@@ -1008,7 +1008,7 @@ export default function ProfileScreen() {
               </Field>
 
               <DropdownField
-                label="Province"
+                label="Province *"
                 value={farmerProvince}
                 placeholder="Select Province"
                 options={PROVINCES}
@@ -1020,7 +1020,7 @@ export default function ProfileScreen() {
               />
 
               <DropdownField
-                label="District"
+                label="District *"
                 value={farmerDistrict}
                 placeholder="Select District"
                 options={getDistricts(farmerProvince)}
@@ -1032,7 +1032,7 @@ export default function ProfileScreen() {
               />
 
               <DropdownField
-                label="City"
+                label="City *"
                 value={farmerCity}
                 placeholder="Select City"
                 options={getCities(farmerProvince, farmerDistrict)}

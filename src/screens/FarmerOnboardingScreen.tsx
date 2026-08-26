@@ -905,7 +905,7 @@ export default function FarmerOnboardingScreen() {
                 {profile ? 'Edit Profile Details' : 'Farmer Account Onboarding'}
               </Text>
 
-              <Field label="Legal Name" error={onboardingErrors.legalName}>
+              <Field label="Legal Name *" error={onboardingErrors.legalName}>
                 <TextInput
                   style={styles.input}
                   placeholder="Enter full legal name"
@@ -915,7 +915,7 @@ export default function FarmerOnboardingScreen() {
                 />
               </Field>
 
-              <Field label="Mobile Number" error={onboardingErrors.mobileNumber}>
+              <Field label="Mobile Number *" error={onboardingErrors.mobileNumber}>
                 <TextInput
                   style={styles.input}
                   placeholder="07X XXXXXXX"
@@ -927,7 +927,7 @@ export default function FarmerOnboardingScreen() {
                 />
               </Field>
 
-              <Field label="Farm Name" error={onboardingErrors.farmName}>
+              <Field label="Farm Name *" error={onboardingErrors.farmName}>
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., Green Valley Organic Farm"
@@ -974,17 +974,17 @@ export default function FarmerOnboardingScreen() {
                 )}
               </Field>
 
-              <Field label="Location" error={onboardingErrors.location}>
+              <Field label="Location *" error={onboardingErrors.location}>
                 <View style={styles.rowGap}>
                   <SelectField
-                    label="Province"
+                    label="Province *"
                     value={province}
                     placeholder="Select"
                     options={PROVINCES}
                     onSelect={handleProvinceSelect}
                   />
                   <SelectField
-                    label="District"
+                    label="District *"
                     value={district}
                     placeholder="Select"
                     options={districts}
@@ -992,7 +992,7 @@ export default function FarmerOnboardingScreen() {
                     onSelect={handleDistrictSelect}
                   />
                   <SelectField
-                    label="City"
+                    label="City *"
                     value={city}
                     placeholder="Select"
                     options={cities}

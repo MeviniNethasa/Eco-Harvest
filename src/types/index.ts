@@ -608,39 +608,28 @@ export type RootTabParamList = {
   Chat: { threadId?: string; recipientName?: string; userRole?: 'CUSTOMER' | 'FARMER' };
 };
 
-// Farmer Mode's own five-tab bottom bar (My Products / Add Product / Orders
-// / Messages / Profile). Kept as a *separate* param list rather than folded
-// into `RootTabParamList`, because the two bars are mutually exclusive per
-// `AppMode` (TabNavigator renders one or the other, never both) and name a
-// couple of tabs identically to Customer Mode's screens ("Orders",
-// "Profile") but with entirely different components behind them.
+// Farmer Mode's five-tab bottom bar (Dashboard / My Products / Orders
+// / Messages / Profile).
 export type FarmerTabParamList = {
+  Dashboard: undefined;
   MyProducts: undefined;
-  AddProduct: undefined;
   FarmerOrders: undefined;
   // Reuses ChatScreen (same as `RootTabParamList.Chat` / `OrdersStackParamList.Chat`),
   // just surfaced as its own always-visible tab instead of a hidden root
   // route, since a farmer's primary reason to open Chat *is* to answer
   // customer inquiries rather than an occasional cross-tab action.
-  // Optional (and the whole params object may be `undefined`) because the
-  // tab is entered two different ways: as a plain bottom-tab press (no
-  // params at all — `initialParams` below seeds `userRole: 'FARMER'`) or
-  // via a deep link / cross-screen navigation into a specific thread
-  // (`chatId`), same idea as `RootTabParamList.Chat`'s `threadId`.
   Messages: { userRole?: 'FARMER' | 'CUSTOMER'; chatId?: string } | undefined;
   Profile: undefined;
 };
 
+export type MyProductsStackParamList = {
+  MyProductsHome: undefined;
+  AddProduct: undefined;
+};
+
 // Union of both bars' route names, used as the single generic type
 // parameter for the one `createBottomTabNavigator` instance in
-// TabNavigator.tsx. TabNavigator only ever *registers* one bar's `Tab.Screen`
-// entries at a time (based on the current `AppMode`), but typing the
-// navigator against the union lets both `RootTabParamList` and
-// `FarmerTabParamList` route/param shapes type-check against the same
-// `Tab.Navigator`/`Tab.Screen` instance without a second, parallel
-// navigator (and the state-loss/remount cost that would come with
-// unmounting one `NavigationContainer` and mounting another on every mode
-// switch).
+// TabNavigator.tsx.
 export type CombinedTabParamList = RootTabParamList & FarmerTabParamList;
 
 // Marketplace tab is its own stack (same pattern as Cart/Orders/Profile

@@ -53,8 +53,8 @@ export default function StripeCheckoutModal({
   visible,
   onClose,
   onSuccess,
-  planTitle = 'Bulk Order Access Plan',
-  planPrice = 'LKR 9,500 / month',
+  planTitle = 'EcoHarvest pro plan',
+  planPrice = 'LKR 500 / month',
   description = 'Recurring monthly subscription for AI Bulk Orders Workspace & verified farm matching.',
 }: StripeCheckoutModalProps) {
   const [cardNumber, setCardNumber] = useState('4242 4242 4242 4242');

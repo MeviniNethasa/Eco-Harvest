@@ -87,12 +87,12 @@ export default function MyProductsScreen() {
         rightElement={
           <Pressable
             style={styles.addButton}
-            onPress={() => navigation.navigate('AddProduct')}
+            onPress={() => navigation.navigate('AddProduct' as any)}
             accessibilityRole="button"
-            accessibilityLabel="Add New Product"
+            accessibilityLabel="Publish Product"
           >
             <Ionicons name="add" size={18} color="#FFFFFF" />
-            <Text style={styles.addButtonText}>Add Product</Text>
+            <Text style={styles.addButtonText}>Publish Product</Text>
           </Pressable>
         }
       />
@@ -113,14 +113,14 @@ export default function MyProductsScreen() {
             </View>
             <Text style={styles.emptyTitle}>No products yet</Text>
             <Text style={styles.emptySubtitle}>
-              Publish your first crop to see it here and live on the marketplace.
+              Publish your first product to see it here and live on the marketplace.
             </Text>
             <Pressable
               style={[styles.addButton, { marginTop: 14 }]}
-              onPress={() => navigation.navigate('AddProduct')}
+              onPress={() => navigation.navigate('AddProduct' as any)}
             >
               <Ionicons name="add" size={18} color="#FFFFFF" />
-              <Text style={styles.addButtonText}>Publish Crop</Text>
+              <Text style={styles.addButtonText}>Publish Product</Text>
             </Pressable>
           </View>
         }

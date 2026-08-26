@@ -27,22 +27,22 @@ router.post('/create-subscription', async (req, res) => {
     if (stripe) {
       try {
         const customer = await stripe.customers.create({
-          name: customerName || 'EcoHarvest Bulk Buyer',
+          name: customerName || 'EcoHarvest Pro Member',
           phone: phoneNumber || '',
-          description: 'EcoHarvest Bulk Buyer Access Plan (LKR 9,500/mo)',
+          description: 'EcoHarvest pro plan (LKR 500/mo)',
           metadata: { userId: userId || '', plan: 'BULK_ACCESS' },
         });
         stripeCustomerId = customer.id;
 
-        // Create and confirm a real LKR 9,500 payment on Stripe Dashboard
+        // Create and confirm a real LKR 500 payment on Stripe Dashboard
         const pi = await stripe.paymentIntents.create({
-          amount: 950000, // LKR 9,500.00
+          amount: 50000, // LKR 500.00
           currency: 'lkr',
           customer: customer.id,
           payment_method: 'pm_card_visa',
           confirm: true,
           return_url: 'https://ecoharvest.local/return',
-          description: 'EcoHarvest Bulk Buyer Access Membership (LKR 9,500/mo)',
+          description: 'EcoHarvest pro plan Membership (LKR 500/mo)',
           metadata: {
             plan: 'BULK_ACCESS',
             userId: userId || '',
@@ -52,7 +52,7 @@ router.post('/create-subscription', async (req, res) => {
 
         stripeSubscriptionId = `sub_${customer.id}_bulk`;
         paymentIntentId = pi.id;
-        console.log(`STRIPE DASHBOARD: Created subscription payment ${pi.id} (LKR 9,500) for customer ${customer.id}`);
+        console.log(`STRIPE DASHBOARD: Created subscription payment ${pi.id} (LKR 500) for customer ${customer.id}`);
       } catch (stripeErr) {
         console.warn('Stripe Live Subscription call failed:', stripeErr.message);
       }
@@ -74,14 +74,14 @@ router.post('/create-subscription', async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Bulk Order Access subscription activated successfully in Stripe',
+      message: 'EcoHarvest pro plan subscription activated successfully in Stripe',
       data: {
         subscriptionId: stripeSubscriptionId,
         paymentIntentId: paymentIntentId,
         customerId: stripeCustomerId,
         status: 'active',
         plan: 'BULK_ACCESS',
-        price: 'LKR 9,500 / month',
+        price: 'LKR 500 / month',
       },
     });
   } catch (error) {

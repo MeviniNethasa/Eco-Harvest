@@ -672,8 +672,8 @@ export default function BulkOrdersScreen() {
               />
               <Text style={styles.upgradeButtonText}>
                 {customerProfile
-                  ? 'Upgrade to Bulk Access (LKR 9,500/mo)'
-                  : 'Register as Customer & Get Bulk Access'}
+                  ? 'Upgrade to EcoHarvest Pro Plan (LKR 500/mo)'
+                  : 'Register as Customer & Get Pro Plan'}
               </Text>
             </Pressable>
           </View>
@@ -751,8 +751,8 @@ export default function BulkOrdersScreen() {
         visible={isStripeModalVisible}
         onClose={() => setIsStripeModalVisible(false)}
         onSuccess={handleUpgradeSuccess}
-        planTitle="Bulk Order Access Plan"
-        planPrice="LKR 9,500 / month"
+        planTitle="EcoHarvest pro plan"
+        planPrice="LKR 500 / month"
         description="Unlocks the AI Bulk Orders workspace for recurring volume orders."
       />
     </View>

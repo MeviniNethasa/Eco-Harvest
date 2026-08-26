@@ -50,15 +50,15 @@ const SUBSCRIPTION_PLANS: {
 }[] = [
   {
     value: 'STANDARD',
-    label: 'Standard Retail Plan',
+    label: 'EcoHarvest free plan',
     price: 'Free (LKR 0)',
     description: 'Everyday direct farm produce shopping with real-time delivery tracking.',
     isBulk: false,
   },
   {
     value: 'BULK_ACCESS',
-    label: 'Bulk Buyer Access Plan',
-    price: 'LKR 9,500 / mo',
+    label: 'EcoHarvest pro plan',
+    price: 'LKR 500 / month',
     description: 'Unlocks AI handwritten order scanning, volume pricing tiers & wholesale consolidation.',
     isBulk: true,
   },
@@ -298,7 +298,7 @@ export default function RegisterCustomerScreen() {
           <Text style={styles.cardTitle}>1. Personal Information</Text>
 
           <View style={styles.fieldWrapper}>
-            <Text style={styles.fieldLabel}>Full Name</Text>
+            <Text style={styles.fieldLabel}>Full Name *</Text>
             <TextInput
               style={styles.input}
               placeholder="e.g. Nimal Perera"
@@ -310,7 +310,7 @@ export default function RegisterCustomerScreen() {
           </View>
 
           <View style={styles.fieldWrapper}>
-            <Text style={styles.fieldLabel}>Mobile Phone Number</Text>
+            <Text style={styles.fieldLabel}>Mobile Phone Number *</Text>
             <TextInput
               style={styles.input}
               placeholder="07X XXXXXXX"
@@ -331,7 +331,7 @@ export default function RegisterCustomerScreen() {
           <Text style={styles.cardTitle}>2. Delivery Location</Text>
 
           <DropdownField
-            label="Province"
+            label="Province *"
             value={province}
             placeholder="Select Province"
             options={PROVINCES}
@@ -343,7 +343,7 @@ export default function RegisterCustomerScreen() {
           />
 
           <DropdownField
-            label="District"
+            label="District *"
             value={district}
             placeholder="Select District"
             options={getDistricts(province)}
@@ -355,7 +355,7 @@ export default function RegisterCustomerScreen() {
           />
 
           <DropdownField
-            label="City"
+            label="City *"
             value={city}
             placeholder="Select City"
             options={getCities(province, district)}
@@ -368,7 +368,7 @@ export default function RegisterCustomerScreen() {
         {/* Plan & Bulk Buyer Access Selection Card */}
         <View style={styles.card}>
           <View style={styles.planHeaderRow}>
-            <Text style={styles.cardTitle}>3. Membership & Bulk Access Plan</Text>
+            <Text style={styles.cardTitle}>3. Membership & Access Plan</Text>
             <Pressable style={styles.bulkPillBadge} onPress={handleToggleBulk}>
               <Ionicons
                 name={isBulkBuyer ? 'checkbox' : 'square-outline'}
@@ -376,7 +376,7 @@ export default function RegisterCustomerScreen() {
                 color={isBulkBuyer ? tokens.colorPrimaryGreen : tokens.colorTextMuted}
               />
               <Text style={[styles.bulkPillText, isBulkBuyer && styles.bulkPillTextActive]}>
-                Bulk Buyer
+                Pro Member
               </Text>
             </Pressable>
           </View>
@@ -434,7 +434,7 @@ export default function RegisterCustomerScreen() {
                 color="#FFFFFF"
               />
               <Text style={styles.submitButtonText}>
-                {isBulkBuyer ? 'Proceed to Bulk Subscription (LKR 9,500)' : 'Complete Free Registration'}
+                {isBulkBuyer ? 'Proceed to Pro Subscription (LKR 500)' : 'Complete Free Registration'}
               </Text>
             </>
           )}
@@ -446,8 +446,8 @@ export default function RegisterCustomerScreen() {
         visible={isStripeModalVisible}
         onClose={() => setIsStripeModalVisible(false)}
         onSuccess={() => commitRegistration('BULK_ACCESS', true)}
-        planTitle="Bulk Buyer Access Membership"
-        planPrice="LKR 9,500 / month"
+        planTitle="EcoHarvest pro plan"
+        planPrice="LKR 500 / month"
         description="Unlocks the AI Bulk Orders workspace for recurring volume orders."
       />
     </KeyboardAvoidingView>
