@@ -23,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
 import StandardHeader from '../components/StandardHeader';
 import StripeCheckoutModal from '../components/StripeCheckoutModal';
+import MapLocationPickerModal, { SelectedLocationData } from '../components/MapLocationPickerModal';
 import { authApi, stripeApi } from '../services/api';
 import { generateCustomerId, saveUserProfile, setActiveMode } from '../utils/storage';
 import type { CustomerProfile, SubscriptionPlan } from '../types';
@@ -151,6 +152,9 @@ export default function RegisterCustomerScreen() {
   const [province, setProvince] = useState<string | null>(null);
   const [district, setDistrict] = useState<string | null>(null);
   const [city, setCity] = useState<string | null>(null);
+  const [streetAddress, setStreetAddress] = useState('');
+  const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [isMapModalVisible, setIsMapModalVisible] = useState(false);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -345,7 +349,52 @@ export default function RegisterCustomerScreen() {
 
         {/* Location Selector Card */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>2. Delivery Location</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.cardTitle}>2. Delivery Location</Text>
+            <Pressable
+              style={styles.mapPinButton}
+              onPress={() => setIsMapModalVisible(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Pin Location on Map"
+            >
+              <Ionicons name="map" size={15} color="#15803D" style={{ marginRight: 5 }} />
+              <Text style={styles.mapPinButtonText}>Pin on Map</Text>
+            </Pressable>
+          </View>
+
+          {/* Quick interactive map trigger box */}
+          <Pressable
+            style={styles.mapPickerTriggerCard}
+            onPress={() => setIsMapModalVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Open Map Location Picker"
+          >
+            <View style={styles.mapPickerTriggerIconBox}>
+              <Ionicons name="navigate-circle" size={26} color="#15803D" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.mapPickerTriggerTitle}>
+                {streetAddress ? streetAddress : 'Drop Pin on Google Maps'}
+              </Text>
+              <Text style={styles.mapPickerTriggerSubtitle}>
+                {coordinates
+                  ? `Lat: ${coordinates.latitude.toFixed(4)}, Lng: ${coordinates.longitude.toFixed(4)}`
+                  : 'Tap to auto-detect GPS or drop pin to fill location'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+          </Pressable>
+
+          <View style={styles.fieldWrapper}>
+            <Text style={styles.fieldLabel}>Street Address / Landmark (optional)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. 123 Main Street, Apt 4B"
+              placeholderTextColor={tokens.colorTextMuted}
+              value={streetAddress}
+              onChangeText={setStreetAddress}
+            />
+          </View>
 
           <DropdownField
             label="Province *"
@@ -529,6 +578,27 @@ export default function RegisterCustomerScreen() {
         planPrice="LKR 500 / month"
         description="Unlocks the AI Bulk Orders workspace for recurring volume orders."
       />
+
+      {/* Interactive Map Pin Location Picker */}
+      <MapLocationPickerModal
+        visible={isMapModalVisible}
+        title="Pin Delivery Location on Google Maps"
+        initialLatitude={coordinates?.latitude || 6.9271}
+        initialLongitude={coordinates?.longitude || 79.8612}
+        onClose={() => setIsMapModalVisible(false)}
+        onSelectLocation={(data: SelectedLocationData) => {
+          setProvince(data.province);
+          setDistrict(data.district);
+          setCity(data.city);
+          setStreetAddress(data.address);
+          setCoordinates({ latitude: data.latitude, longitude: data.longitude });
+          setFormErrors((prev) => {
+            const next = { ...prev };
+            delete next.location;
+            return next;
+          });
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -536,6 +606,57 @@ export default function RegisterCustomerScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: tokens.colorBgMain },
   scrollContent: { padding: 16, paddingBottom: 40, gap: 16 },
+
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  mapPinButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  mapPinButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  mapPickerTriggerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    gap: 12,
+    marginBottom: 10,
+  },
+  mapPickerTriggerIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mapPickerTriggerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: tokens.colorTextDark,
+  },
+  mapPickerTriggerSubtitle: {
+    fontSize: 11,
+    color: tokens.colorTextMuted,
+    marginTop: 2,
+  },
 
   card: {
     backgroundColor: tokens.colorBgCard,

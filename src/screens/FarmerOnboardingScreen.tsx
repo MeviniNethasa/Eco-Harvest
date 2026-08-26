@@ -46,6 +46,7 @@ import {
   syncFarmerProfileToVerificationQueue,
 } from '../utils/storage';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
+import MapLocationPickerModal, { SelectedLocationData } from '../components/MapLocationPickerModal';
 import { authApi, farmerApi } from '../services/api';
 
 // ---------------------------------------------------------------------------
@@ -253,6 +254,9 @@ export default function FarmerOnboardingScreen() {
   const [province, setProvince] = useState<string | null>(null);
   const [district, setDistrict] = useState<string | null>(null);
   const [city, setCity] = useState<string | null>(null);
+  const [farmAddress, setFarmAddress] = useState('');
+  const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [isMapModalVisible, setIsMapModalVisible] = useState(false);
   const [bankName, setBankName] = useState('');
   const [branchCode, setBranchCode] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
@@ -1052,33 +1056,81 @@ export default function FarmerOnboardingScreen() {
                 )}
               </Field>
 
-              <Field label="Location *" error={onboardingErrors.location}>
-                <View style={styles.rowGap}>
-                  <SelectField
-                    label="Province *"
-                    value={province}
-                    placeholder="Select"
-                    options={PROVINCES}
-                    onSelect={handleProvinceSelect}
-                  />
-                  <SelectField
-                    label="District *"
-                    value={district}
-                    placeholder="Select"
-                    options={districts}
-                    disabled={!province}
-                    onSelect={handleDistrictSelect}
-                  />
-                  <SelectField
-                    label="City *"
-                    value={city}
-                    placeholder="Select"
-                    options={cities}
-                    disabled={!district}
-                    onSelect={setCity}
-                  />
+              <View style={{ marginTop: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={styles.label}>Farm Location *</Text>
+                  <Pressable
+                    style={styles.mapPinTriggerBtn}
+                    onPress={() => setIsMapModalVisible(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Pin Farm on Map"
+                  >
+                    <Ionicons name="map" size={14} color="#15803D" style={{ marginRight: 4 }} />
+                    <Text style={styles.mapPinTriggerBtnText}>Pin Farm on Map</Text>
+                  </Pressable>
                 </View>
-              </Field>
+
+                {/* Map Quick Selector Box */}
+                <Pressable
+                  style={styles.mapPickerTriggerCard}
+                  onPress={() => setIsMapModalVisible(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Map Location Picker"
+                >
+                  <View style={styles.mapPickerTriggerIconBox}>
+                    <Ionicons name="location" size={24} color="#15803D" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.mapPickerTriggerTitle}>
+                      {farmAddress ? farmAddress : 'Drop Pin on Google Maps'}
+                    </Text>
+                    <Text style={styles.mapPickerTriggerSubtitle}>
+                      {coordinates
+                        ? `GPS: ${coordinates.latitude.toFixed(4)}, ${coordinates.longitude.toFixed(4)}`
+                        : 'Tap to locate farm via GPS or drop pin anywhere'}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+                </Pressable>
+
+                <Field label="Farm Address / Estate Landmark (optional)">
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g., Highland Tea Estate, Main Road"
+                    placeholderTextColor={tokens.colorTextMuted}
+                    value={farmAddress}
+                    onChangeText={setFarmAddress}
+                  />
+                </Field>
+
+                <Field label="Region / City *" error={onboardingErrors.location}>
+                  <View style={styles.rowGap}>
+                    <SelectField
+                      label="Province *"
+                      value={province}
+                      placeholder="Select"
+                      options={PROVINCES}
+                      onSelect={handleProvinceSelect}
+                    />
+                    <SelectField
+                      label="District *"
+                      value={district}
+                      placeholder="Select"
+                      options={districts}
+                      disabled={!province}
+                      onSelect={handleDistrictSelect}
+                    />
+                    <SelectField
+                      label="City *"
+                      value={city}
+                      placeholder="Select"
+                      options={cities}
+                      disabled={!district}
+                      onSelect={setCity}
+                    />
+                  </View>
+                </Field>
+              </View>
             </View>
 
             {/* ---------------- Account Password Section ---------------- */}
@@ -1306,6 +1358,27 @@ export default function FarmerOnboardingScreen() {
           </Pressable>
         </View>
       </View>
+
+      {/* Interactive Map Pin Location Picker */}
+      <MapLocationPickerModal
+        visible={isMapModalVisible}
+        title="Pin Farm Location on Google Maps"
+        initialLatitude={coordinates?.latitude || 6.9271}
+        initialLongitude={coordinates?.longitude || 79.8612}
+        onClose={() => setIsMapModalVisible(false)}
+        onSelectLocation={(data: SelectedLocationData) => {
+          setProvince(data.province);
+          setDistrict(data.district);
+          setCity(data.city);
+          setFarmAddress(data.address);
+          setCoordinates({ latitude: data.latitude, longitude: data.longitude });
+          setOnboardingErrors((prev) => {
+            const next = { ...prev };
+            delete next.location;
+            return next;
+          });
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -1746,5 +1819,49 @@ const styles = StyleSheet.create({
   },
   eyeButton: {
     padding: 6,
+  },
+  mapPinTriggerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  mapPinTriggerBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  mapPickerTriggerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    gap: 12,
+    marginBottom: 12,
+  },
+  mapPickerTriggerIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mapPickerTriggerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: tokens.colorTextDark,
+  },
+  mapPickerTriggerSubtitle: {
+    fontSize: 11,
+    color: tokens.colorTextMuted,
+    marginTop: 2,
   },
 });

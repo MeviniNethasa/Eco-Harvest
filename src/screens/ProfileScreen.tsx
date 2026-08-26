@@ -38,6 +38,7 @@ import {
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
 import StandardHeader from '../components/StandardHeader';
 import StripeCheckoutModal from '../components/StripeCheckoutModal';
+import MapLocationPickerModal, { SelectedLocationData } from '../components/MapLocationPickerModal';
 import { authApi, farmerApi, stripeApi } from '../services/api';
 
 type ProfileNavProp = NativeStackNavigationProp<ProfileStackParamList, 'ProfileHome'>;
@@ -207,6 +208,9 @@ export default function ProfileScreen() {
   const [customerProvince, setCustomerProvince] = useState<string | null>(null);
   const [customerDistrict, setCustomerDistrict] = useState<string | null>(null);
   const [customerCity, setCustomerCity] = useState<string | null>(null);
+  const [customerAddress, setCustomerAddress] = useState('');
+  const [customerCoords, setCustomerCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [isCustomerMapModalVisible, setIsCustomerMapModalVisible] = useState(false);
   const [customerPassword, setCustomerPassword] = useState('');
   const [customerConfirmPassword, setCustomerConfirmPassword] = useState('');
   const [showCustomerPassword, setShowCustomerPassword] = useState(false);
@@ -224,6 +228,9 @@ export default function ProfileScreen() {
   const [farmerProvince, setFarmerProvince] = useState<string | null>(null);
   const [farmerDistrict, setFarmerDistrict] = useState<string | null>(null);
   const [farmerCity, setFarmerCity] = useState<string | null>(null);
+  const [farmerAddress, setFarmerAddress] = useState('');
+  const [farmerCoords, setFarmerCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [isFarmerMapModalVisible, setIsFarmerMapModalVisible] = useState(false);
   const [bankName, setBankName] = useState('');
   const [branchCode, setBranchCode] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
@@ -985,6 +992,54 @@ export default function ProfileScreen() {
                 />
               </Field>
 
+              {/* Map Location Pin Trigger */}
+              <View style={{ marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={styles.label}>Delivery Location *</Text>
+                  <Pressable
+                    style={styles.mapPinTriggerBtn}
+                    onPress={() => setIsCustomerMapModalVisible(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Pin Location on Map"
+                  >
+                    <Ionicons name="map" size={14} color="#15803D" style={{ marginRight: 4 }} />
+                    <Text style={styles.mapPinTriggerBtnText}>Pin on Map</Text>
+                  </Pressable>
+                </View>
+
+                <Pressable
+                  style={styles.mapPickerTriggerCard}
+                  onPress={() => setIsCustomerMapModalVisible(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Map Location Picker"
+                >
+                  <View style={styles.mapPickerTriggerIconBox}>
+                    <Ionicons name="navigate-circle" size={24} color="#15803D" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.mapPickerTriggerTitle}>
+                      {customerAddress ? customerAddress : 'Drop Pin on Google Maps'}
+                    </Text>
+                    <Text style={styles.mapPickerTriggerSubtitle}>
+                      {customerCoords
+                        ? `GPS: ${customerCoords.latitude.toFixed(4)}, ${customerCoords.longitude.toFixed(4)}`
+                        : 'Tap to auto-detect GPS or drop pin to fill location'}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+                </Pressable>
+              </View>
+
+              <Field label="Street Address / Landmark (optional)">
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 45 Temple Road, Apt 2"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  value={customerAddress}
+                  onChangeText={setCustomerAddress}
+                />
+              </Field>
+
               {/* Structured Cascading Location Pickers */}
               <DropdownField
                 label="Province *"
@@ -1187,6 +1242,53 @@ export default function ProfileScreen() {
                   placeholder="Enter farm name"
                   value={farmerFarmName}
                   onChangeText={setFarmerFarmName}
+                />
+              </Field>
+
+              <View style={{ marginTop: 4, marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={styles.label}>Farm Location *</Text>
+                  <Pressable
+                    style={styles.mapPinTriggerBtn}
+                    onPress={() => setIsFarmerMapModalVisible(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Pin Farm Location on Map"
+                  >
+                    <Ionicons name="map" size={14} color="#15803D" style={{ marginRight: 4 }} />
+                    <Text style={styles.mapPinTriggerBtnText}>Pin Farm on Map</Text>
+                  </Pressable>
+                </View>
+
+                <Pressable
+                  style={styles.mapPickerTriggerCard}
+                  onPress={() => setIsFarmerMapModalVisible(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open Map Location Picker"
+                >
+                  <View style={styles.mapPickerTriggerIconBox}>
+                    <Ionicons name="location" size={24} color="#15803D" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.mapPickerTriggerTitle}>
+                      {farmerAddress ? farmerAddress : 'Drop Pin on Google Maps'}
+                    </Text>
+                    <Text style={styles.mapPickerTriggerSubtitle}>
+                      {farmerCoords
+                        ? `GPS: ${farmerCoords.latitude.toFixed(4)}, ${farmerCoords.longitude.toFixed(4)}`
+                        : 'Tap to locate farm via GPS or drop pin anywhere'}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+                </Pressable>
+              </View>
+
+              <Field label="Farm Street Address / Landmark (optional)">
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 10 Tea Estate Road"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  value={farmerAddress}
+                  onChangeText={setFarmerAddress}
                 />
               </Field>
 
@@ -1400,6 +1502,48 @@ export default function ProfileScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Customer Location Picker Modal */}
+      <MapLocationPickerModal
+        visible={isCustomerMapModalVisible}
+        title="Pin Delivery Location on Google Maps"
+        initialLatitude={customerCoords?.latitude || 6.9271}
+        initialLongitude={customerCoords?.longitude || 79.8612}
+        onClose={() => setIsCustomerMapModalVisible(false)}
+        onSelectLocation={(data: SelectedLocationData) => {
+          setCustomerProvince(data.province);
+          setCustomerDistrict(data.district);
+          setCustomerCity(data.city);
+          setCustomerAddress(data.address);
+          setCustomerCoords({ latitude: data.latitude, longitude: data.longitude });
+          setFormErrors((prev) => {
+            const next = { ...prev };
+            delete next.location;
+            return next;
+          });
+        }}
+      />
+
+      {/* Farmer Location Picker Modal */}
+      <MapLocationPickerModal
+        visible={isFarmerMapModalVisible}
+        title="Pin Farm Location on Google Maps"
+        initialLatitude={farmerCoords?.latitude || 6.9271}
+        initialLongitude={farmerCoords?.longitude || 79.8612}
+        onClose={() => setIsFarmerMapModalVisible(false)}
+        onSelectLocation={(data: SelectedLocationData) => {
+          setFarmerProvince(data.province);
+          setFarmerDistrict(data.district);
+          setFarmerCity(data.city);
+          setFarmerAddress(data.address);
+          setFarmerCoords({ latitude: data.latitude, longitude: data.longitude });
+          setFarmerErrors((prev) => {
+            const next = { ...prev };
+            delete next.location;
+            return next;
+          });
+        }}
+      />
     </View>
   );
 }
@@ -1748,4 +1892,48 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   primaryButtonText: { fontSize: 14, fontWeight: '600', color: '#FFFFFF' },
+  mapPinTriggerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  mapPinTriggerBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  mapPickerTriggerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    gap: 12,
+    marginBottom: 10,
+  },
+  mapPickerTriggerIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mapPickerTriggerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: tokens.colorTextDark,
+  },
+  mapPickerTriggerSubtitle: {
+    fontSize: 11,
+    color: tokens.colorTextMuted,
+    marginTop: 2,
+  },
 });
