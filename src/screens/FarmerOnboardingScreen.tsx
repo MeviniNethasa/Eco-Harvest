@@ -31,6 +31,7 @@ import {
 import {
   addNotification,
   clearFarmerProfile,
+  clearUserProfile,
   generateFarmerId,
   getAllChatThreads,
   getChatMessages,
@@ -909,6 +910,47 @@ export default function FarmerOnboardingScreen() {
     }
   };
 
+  const handleSignOut = async () => {
+    const doSignOut = async () => {
+      try {
+        await clearFarmerProfile();
+        await clearUserProfile();
+        await setActiveMode('customer');
+        setProfile(null);
+        if (Platform.OS === 'web') {
+          if (typeof window !== 'undefined') {
+            window.alert('You have been signed out.');
+          }
+        } else {
+          Alert.alert('Signed Out', 'You have been signed out.');
+        }
+        (navigation as any).navigate('ProfileHome');
+      } catch (err) {
+        console.error('Failed to sign out:', err);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed =
+        typeof window !== 'undefined'
+          ? window.confirm('Are you sure you want to sign out of your EcoHarvest account?')
+          : true;
+      if (confirmed) {
+        await doSignOut();
+      }
+      return;
+    }
+
+    Alert.alert('Sign Out', 'Are you sure you want to sign out of your EcoHarvest account?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: doSignOut,
+      },
+    ]);
+  };
+
   // ---------------------------------------------------------------------
   // Loading state
   // ---------------------------------------------------------------------
@@ -1199,6 +1241,27 @@ export default function FarmerOnboardingScreen() {
                 onPress={handleEditProfile}
               >
                 <Text style={styles.secondaryButtonText}>Edit Profile Details</Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.secondaryButton,
+                  {
+                    marginTop: 10,
+                    marginBottom: 0,
+                    backgroundColor: '#FEF2F2',
+                    borderColor: '#FEE2E2',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  },
+                ]}
+                onPress={handleSignOut}
+                accessibilityRole="button"
+                accessibilityLabel="Sign Out of Farmer Account"
+              >
+                <Ionicons name="log-out-outline" size={16} color={tokens.colorAlertCrimson} style={{ marginRight: 6 }} />
+                <Text style={[styles.secondaryButtonText, { color: tokens.colorAlertCrimson }]}>Sign Out</Text>
               </Pressable>
             </View>
           </>

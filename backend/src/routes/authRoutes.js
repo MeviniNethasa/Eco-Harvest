@@ -67,18 +67,10 @@ router.post('/register', async (req, res) => {
         .json({ success: false, message: 'Full name and phone number are required' });
     }
 
-    // Explicit pre-check for existing phone number
+    // Lookup existing user by phone number
     const existingUser = await User.findOne({
       $or: [{ phoneNumber: phone }, { mobile: phone }],
     });
-
-    if (existingUser && isNewRegistration && (!userId || String(existingUser._id) !== String(userId))) {
-      return res.status(400).json({
-        success: false,
-        message: 'This phone number is already registered. Please log in or use a different number.',
-        errorType: 'DUPLICATE_PHONE',
-      });
-    }
 
     const assignedRole = (role || (farmName ? 'FARMER' : 'CUSTOMER')).toUpperCase();
     const planToSave =

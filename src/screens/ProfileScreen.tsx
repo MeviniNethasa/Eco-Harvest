@@ -207,6 +207,9 @@ export default function ProfileScreen() {
   const [customerProvince, setCustomerProvince] = useState<string | null>(null);
   const [customerDistrict, setCustomerDistrict] = useState<string | null>(null);
   const [customerCity, setCustomerCity] = useState<string | null>(null);
+  const [customerPassword, setCustomerPassword] = useState('');
+  const [customerConfirmPassword, setCustomerConfirmPassword] = useState('');
+  const [showCustomerPassword, setShowCustomerPassword] = useState(false);
   const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>('STANDARD');
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
@@ -333,6 +336,9 @@ export default function ProfileScreen() {
     setCustomerProvince(null);
     setCustomerDistrict(null);
     setCustomerCity(null);
+    setCustomerPassword('');
+    setCustomerConfirmPassword('');
+    setShowCustomerPassword(false);
     setSubscriptionPlan('STANDARD');
     setFormErrors({});
   };
@@ -369,6 +375,18 @@ export default function ProfileScreen() {
     if (!customerProvince) next.location = 'Select a province.';
     else if (!customerDistrict) next.location = 'Select a district.';
     else if (!customerCity) next.location = 'Select a city.';
+
+    // Password validation for new customer registration
+    if (!customerProfile) {
+      if (!customerPassword.trim()) {
+        next.password = 'Password is required.';
+      } else if (customerPassword.trim().length < 6) {
+        next.password = 'Password must be at least 6 characters.';
+      } else if (customerPassword !== customerConfirmPassword) {
+        next.confirmPassword = 'Passwords do not match.';
+      }
+    }
+
     setFormErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -415,24 +433,12 @@ export default function ProfileScreen() {
           subscriptionPlan: planToSave,
           isBulkBuyer: planToSave === 'BULK_ACCESS',
           bulkAccessPlan: planToSave,
+          password: customerPassword.trim() || undefined,
           isNewRegistration: !customerProfile,
           userId: customerProfile?.id,
         });
       } catch (apiErr: any) {
-        const msg = apiErr?.message || '';
-        if (
-          msg.includes('already registered') ||
-          msg.includes('duplicate') ||
-          apiErr?.errorType === 'DUPLICATE_PHONE'
-        ) {
-          Alert.alert(
-            'Phone Number Registered',
-            'This phone number is already registered. Please log in or use a different number.'
-          );
-          setIsSaving(false);
-          return;
-        }
-        console.log('Backend sync notice (offline mode active):', msg);
+        console.log('Backend sync notice (offline mode active):', apiErr?.message);
       }
 
       const saved = await saveUserProfile(profileToSave);
@@ -669,21 +675,44 @@ export default function ProfileScreen() {
   };
 
   // Sign Out action
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    const doSignOut = async () => {
+      try {
+        await clearUserProfile();
+        await clearFarmerProfile();
+        await setActiveMode('customer');
+        setCustomerProfile(null);
+        setFarmerProfile(null);
+        setActiveModeState('customer');
+        if (Platform.OS === 'web') {
+          if (typeof window !== 'undefined') {
+            window.alert('You have been signed out.');
+          }
+        } else {
+          Alert.alert('Signed Out', 'You have been signed out.');
+        }
+      } catch (err) {
+        console.error('Failed to sign out:', err);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed =
+        typeof window !== 'undefined'
+          ? window.confirm('Are you sure you want to sign out of your EcoHarvest account?')
+          : true;
+      if (confirmed) {
+        await doSignOut();
+      }
+      return;
+    }
+
     Alert.alert('Sign Out', 'Are you sure you want to sign out of your EcoHarvest account?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Sign Out',
         style: 'destructive',
-        onPress: async () => {
-          await clearUserProfile();
-          await clearFarmerProfile();
-          await setActiveMode('customer');
-          setCustomerProfile(null);
-          setFarmerProfile(null);
-          setActiveModeState('customer');
-          Alert.alert('Signed Out', 'You have been signed out.');
-        },
+        onPress: doSignOut,
       },
     ]);
   };
@@ -1001,7 +1030,7 @@ export default function ProfileScreen() {
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {customerProfile ? 'Edit Customer Details' : 'Register as Customer'}
+                {customerProfile ? 'Edit Customer Details' : 'Sign Up as a Customer'}
               </Text>
               <Pressable
                 onPress={() => setIsRegisterModalVisible(false)}
@@ -1069,7 +1098,63 @@ export default function ProfileScreen() {
               />
               {!!formErrors.location && <Text style={styles.errorText}>{formErrors.location}</Text>}
 
-              <Text style={[styles.label, { marginTop: 10 }]}>Subscription Plan</Text>
+              {/* Password Section (for Sign Up) */}
+              {!customerProfile && (
+                <>
+                  <Text style={[styles.label, { marginTop: 12, fontWeight: '700' }]}>
+                    Account Password
+                  </Text>
+                  <Field label="Password *" error={formErrors.password}>
+                    <View style={styles.passwordInputContainer}>
+                      <TextInput
+                        style={styles.passwordInput}
+                        placeholder="Create a secure password (min 6 chars)"
+                        placeholderTextColor={tokens.colorTextMuted}
+                        secureTextEntry={!showCustomerPassword}
+                        value={customerPassword}
+                        onChangeText={setCustomerPassword}
+                      />
+                      <Pressable
+                        style={styles.eyeButton}
+                        onPress={() => setShowCustomerPassword((prev) => !prev)}
+                        hitSlop={8}
+                      >
+                        <Ionicons
+                          name={showCustomerPassword ? 'eye-off-outline' : 'eye-outline'}
+                          size={20}
+                          color={tokens.colorTextMuted}
+                        />
+                      </Pressable>
+                    </View>
+                  </Field>
+
+                  <Field label="Confirm Password *" error={formErrors.confirmPassword}>
+                    <View style={styles.passwordInputContainer}>
+                      <TextInput
+                        style={styles.passwordInput}
+                        placeholder="Re-enter your password"
+                        placeholderTextColor={tokens.colorTextMuted}
+                        secureTextEntry={!showCustomerPassword}
+                        value={customerConfirmPassword}
+                        onChangeText={setCustomerConfirmPassword}
+                      />
+                      <Pressable
+                        style={styles.eyeButton}
+                        onPress={() => setShowCustomerPassword((prev) => !prev)}
+                        hitSlop={8}
+                      >
+                        <Ionicons
+                          name={showCustomerPassword ? 'eye-off-outline' : 'eye-outline'}
+                          size={20}
+                          color={tokens.colorTextMuted}
+                        />
+                      </Pressable>
+                    </View>
+                  </Field>
+                </>
+              )}
+
+              <Text style={[styles.label, { marginTop: 12, fontWeight: '700' }]}>Membership & Access Plan</Text>
               {SUBSCRIPTION_PLANS.map((plan) => {
                 const selected = subscriptionPlan === plan.value;
                 return (
@@ -1111,6 +1196,8 @@ export default function ProfileScreen() {
                       : subscriptionPlan === 'BULK_ACCESS' &&
                         customerProfile?.subscriptionPlan !== 'BULK_ACCESS'
                         ? 'Proceed to Payment'
+                        : customerProfile
+                        ? 'Save Changes'
                         : 'Save & Continue'}
                   </Text>
                 </Pressable>
