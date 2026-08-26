@@ -48,21 +48,21 @@ const SUBSCRIPTION_PLANS: {
   description: string;
   isBulk: boolean;
 }[] = [
-  {
-    value: 'STANDARD',
-    label: 'EcoHarvest free plan',
-    price: 'Free (LKR 0)',
-    description: 'Everyday direct farm produce shopping with real-time delivery tracking.',
-    isBulk: false,
-  },
-  {
-    value: 'BULK_ACCESS',
-    label: 'EcoHarvest pro plan',
-    price: 'LKR 500 / month',
-    description: 'Unlocks AI handwritten order scanning, volume pricing tiers & wholesale consolidation.',
-    isBulk: true,
-  },
-];
+    {
+      value: 'STANDARD',
+      label: 'EcoHarvest free plan',
+      price: 'Free (LKR 0)',
+      description: 'Everyday direct farm produce shopping with real-time delivery tracking.',
+      isBulk: false,
+    },
+    {
+      value: 'BULK_ACCESS',
+      label: 'EcoHarvest pro plan',
+      price: 'LKR 500 / month',
+      description: 'Unlocks AI handwritten order scanning, volume pricing tiers & wholesale consolidation.',
+      isBulk: true,
+    },
+  ];
 
 interface SelectProps {
   label: string;
@@ -151,6 +151,10 @@ export default function RegisterCustomerScreen() {
   const [province, setProvince] = useState<string | null>(null);
   const [district, setDistrict] = useState<string | null>(null);
   const [city, setCity] = useState<string | null>(null);
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>(
     initialPlan === 'BULK_ACCESS' ? 'BULK_ACCESS' : 'STANDARD'
   );
@@ -169,6 +173,18 @@ export default function RegisterCustomerScreen() {
     if (!province) errors.location = 'Please select a province.';
     else if (!district) errors.location = 'Please select a district.';
     else if (!city) errors.location = 'Please select a city.';
+
+    if (!password) {
+      errors.password = 'Password is required.';
+    } else if (password.length < 6) {
+      errors.password = 'Password must be at least 6 characters.';
+    }
+
+    if (!confirmPassword) {
+      errors.confirmPassword = 'Confirm password is required.';
+    } else if (password !== confirmPassword) {
+      errors.confirmPassword = 'Passwords do not match.';
+    }
 
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
@@ -210,7 +226,7 @@ export default function RegisterCustomerScreen() {
         createdAt: new Date().toISOString(),
       };
 
-      // 1. Send registration payload with isBulkBuyer and bulkAccessPlan to backend API
+      // 1. Send registration payload with isBulkBuyer, bulkAccessPlan, and password to backend API
       try {
         await authApi.register({
           fullName: newProfile.fullName,
@@ -222,6 +238,7 @@ export default function RegisterCustomerScreen() {
           subscriptionPlan: plan,
           isBulkBuyer: bulkStatus,
           bulkAccessPlan: plan,
+          password: password.trim(),
           isNewRegistration: true,
         });
       } catch (apiErr: any) {
@@ -233,7 +250,7 @@ export default function RegisterCustomerScreen() {
         ) {
           Alert.alert(
             'Phone Number Registered',
-            'This phone number is already registered. Please use a different phone number.'
+            'This phone number is already registered. Please use a different phone number or sign in.'
           );
           setIsSubmitting(false);
           return;
@@ -264,7 +281,7 @@ export default function RegisterCustomerScreen() {
       };
 
       Alert.alert(
-        'Registration Complete',
+        'Sign Up Complete',
         `Welcome to EcoHarvest, ${newProfile.fullName}! ${
           bulkStatus ? 'Bulk Buyer Access is active.' : ''
         }`,
@@ -275,8 +292,8 @@ export default function RegisterCustomerScreen() {
         setTimeout(finishNavigation, 400);
       }
     } catch (err: any) {
-      console.error('Registration failed:', err);
-      Alert.alert('Registration Failed', 'Could not complete registration. Please try again.');
+      console.error('Sign up failed:', err);
+      Alert.alert('Sign Up Failed', 'Could not complete sign up. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -288,7 +305,7 @@ export default function RegisterCustomerScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <StandardHeader
-        title="Customer Registration"
+        title="Sign Up as a Customer"
         subtitle="Create your buyer account & opt into bulk wholesale access"
       />
 
@@ -365,10 +382,72 @@ export default function RegisterCustomerScreen() {
           {!!formErrors.location && <Text style={styles.errorText}>{formErrors.location}</Text>}
         </View>
 
+        {/* Password Card (Below Delivery and Above Membership & Access Plan) */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>3. Account Password</Text>
+          <Text style={styles.planSubtitle}>
+            Set a secure password for your EcoHarvest account (minimum 6 characters).
+          </Text>
+
+          <View style={styles.fieldWrapper}>
+            <Text style={styles.fieldLabel}>Password *</Text>
+            <View style={styles.passwordInputContainer}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Enter password (first time)"
+                placeholderTextColor={tokens.colorTextMuted}
+                secureTextEntry={!showPassword}
+                value={password}
+                onChangeText={setPassword}
+              />
+              <Pressable
+                style={styles.eyeButton}
+                onPress={() => setShowPassword((prev) => !prev)}
+                hitSlop={8}
+              >
+                <Ionicons
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={tokens.colorTextMuted}
+                />
+              </Pressable>
+            </View>
+            {!!formErrors.password && <Text style={styles.errorText}>{formErrors.password}</Text>}
+          </View>
+
+          <View style={styles.fieldWrapper}>
+            <Text style={styles.fieldLabel}>Confirm Password *</Text>
+            <View style={styles.passwordInputContainer}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Confirm password (second time)"
+                placeholderTextColor={tokens.colorTextMuted}
+                secureTextEntry={!showConfirmPassword}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+              />
+              <Pressable
+                style={styles.eyeButton}
+                onPress={() => setShowConfirmPassword((prev) => !prev)}
+                hitSlop={8}
+              >
+                <Ionicons
+                  name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={tokens.colorTextMuted}
+                />
+              </Pressable>
+            </View>
+            {!!formErrors.confirmPassword && (
+              <Text style={styles.errorText}>{formErrors.confirmPassword}</Text>
+            )}
+          </View>
+        </View>
+
         {/* Plan & Bulk Buyer Access Selection Card */}
         <View style={styles.card}>
           <View style={styles.planHeaderRow}>
-            <Text style={styles.cardTitle}>3. Membership & Access Plan</Text>
+            <Text style={styles.cardTitle}>4. Membership & Access Plan</Text>
             <Pressable style={styles.bulkPillBadge} onPress={handleToggleBulk}>
               <Ionicons
                 name={isBulkBuyer ? 'checkbox' : 'square-outline'}
@@ -382,7 +461,7 @@ export default function RegisterCustomerScreen() {
           </View>
 
           <Text style={styles.planSubtitle}>
-            Choose whether you are registering for retail household delivery or high-volume wholesale sourcing:
+            Choose whether you are signing up for retail household delivery or high-volume wholesale sourcing:
           </Text>
 
           {SUBSCRIPTION_PLANS.map((plan) => {
@@ -422,7 +501,7 @@ export default function RegisterCustomerScreen() {
           onPress={handleProceed}
           disabled={isSubmitting}
           accessibilityRole="button"
-          accessibilityLabel="Create Account"
+          accessibilityLabel="Sign Up"
         >
           {isSubmitting ? (
             <ActivityIndicator color="#FFFFFF" />
@@ -434,7 +513,7 @@ export default function RegisterCustomerScreen() {
                 color="#FFFFFF"
               />
               <Text style={styles.submitButtonText}>
-                {isBulkBuyer ? 'Proceed to Pro Subscription (LKR 500)' : 'Complete Free Registration'}
+                {isBulkBuyer ? 'Proceed to Pro Subscription (LKR 500)' : 'Complete Sign Up'}
               </Text>
             </>
           )}
@@ -560,6 +639,26 @@ const styles = StyleSheet.create({
   planPriceBadge: { fontSize: 12, fontWeight: '700', color: tokens.colorTextMuted },
   planPriceBadgeActive: { color: tokens.colorPrimaryGreen },
   planOptionDescription: { fontSize: 12, color: tokens.colorTextMuted, lineHeight: 16 },
+
+  // Password Input
+  passwordInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: tokens.colorBorderGray,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+  },
+  passwordInput: {
+    flex: 1,
+    minHeight: 44,
+    fontSize: 14,
+    color: tokens.colorTextDark,
+  },
+  eyeButton: {
+    padding: 6,
+  },
 
   // Submit button
   submitButton: {

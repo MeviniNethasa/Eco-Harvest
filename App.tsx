@@ -20,29 +20,6 @@ function isAdminPathname(): boolean {
 
 export default function App() {
   // ---------------------------------------------------------------------
-  // Temporary Dev Reset: Safely fetch and remove all AsyncStorage keys 
-  // without triggering iOS native directory removal errors.
-  // Remove this useEffect once you verify the onboarding choice cards.
-  // ---------------------------------------------------------------------
-  useEffect(() => {
-    const safeWipeStorage = async () => {
-      try {
-        const keys = await AsyncStorage.getAllKeys();
-        if (keys.length > 0) {
-          await AsyncStorage.multiRemove(keys);
-          console.log('⚡ All AsyncStorage keys wiped safely:', keys);
-        } else {
-          console.log('⚡ AsyncStorage is already empty.');
-        }
-      } catch (e) {
-        console.error('Failed safe wipe:', e);
-      }
-    };
-
-    safeWipeStorage();
-  }, []);
-
-  // ---------------------------------------------------------------------
   // Web Path Routing: EcoHarvest Desktop Admin Command Panel (Screen A-01)
   // is a separate, web-only surface reachable at `/admin`, architecturally
   // isolated from the mobile app's TabNavigator. On web, the very first

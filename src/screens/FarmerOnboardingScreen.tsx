@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import {
   AppNotification,
   BankDetails,
@@ -44,7 +45,7 @@ import {
   syncFarmerProfileToVerificationQueue,
 } from '../utils/storage';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
-import { farmerApi } from '../services/api';
+import { authApi, farmerApi } from '../services/api';
 
 // ---------------------------------------------------------------------------
 // Design tokens (from design.md — Screen M-02 spec)
@@ -258,6 +259,10 @@ export default function FarmerOnboardingScreen() {
   const [certificateUri, setCertificateUri] = useState<string | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<VerificationStatus>('UNVERIFIED');
   const [commissionRate, setCommissionRate] = useState<number>(DEFAULT_COMMISSION_RATE);
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [onboardingErrors, setOnboardingErrors] = useState<Record<string, string>>({});
 
   // --- Product Publisher fields (Dashboard / View Mode 2 only) ---
@@ -285,8 +290,8 @@ export default function FarmerOnboardingScreen() {
             res.data.slsiStatus === 'VERIFIED' || res.data.isSLSIVerified
               ? 'VERIFIED'
               : res.data.slsiStatus === 'REJECTED'
-              ? 'REJECTED'
-              : existing.verificationStatus;
+                ? 'REJECTED'
+                : existing.verificationStatus;
 
           const merged: FarmerProfile = {
             ...existing,
@@ -545,6 +550,28 @@ export default function FarmerOnboardingScreen() {
     if (!mobileNumber.trim()) next.mobileNumber = 'Mobile number is required.';
     if (!farmName.trim()) next.farmName = 'Farm name is required.';
     if (!province || !district || !city) next.location = 'Select province, district and city.';
+
+    // Validate password for first-time sign-up or if password is provided
+    if (!profile) {
+      if (!password) {
+        next.password = 'Password is required.';
+      } else if (password.length < 6) {
+        next.password = 'Password must be at least 6 characters.';
+      }
+      if (!confirmPassword) {
+        next.confirmPassword = 'Confirm password is required.';
+      } else if (password !== confirmPassword) {
+        next.confirmPassword = 'Passwords do not match.';
+      }
+    } else if (password) {
+      if (password.length < 6) {
+        next.password = 'Password must be at least 6 characters.';
+      }
+      if (password !== confirmPassword) {
+        next.confirmPassword = 'Passwords do not match.';
+      }
+    }
+
     setOnboardingErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -581,15 +608,30 @@ export default function FarmerOnboardingScreen() {
         commissionRate: profile?.commissionRate ?? commissionRate,
       };
 
+      // ── Live Auth registration / account creation in MongoDB ──
+      try {
+        await authApi.register({
+          fullName: profileToSave.legalName,
+          phoneNumber: profileToSave.mobileNumber,
+          role: 'FARMER',
+          city: profileToSave.city,
+          district: profileToSave.district,
+          province: profileToSave.province,
+          farmName: profileToSave.farmName,
+          ownerName: profileToSave.legalName,
+          slsiCertificateUrl: profileToSave.slsiCertificateUri || '',
+          bankDetails: profileToSave.bankDetails,
+          password: password.trim() ? password.trim() : undefined,
+          isNewRegistration: !profile,
+        });
+      } catch (authErr: any) {
+        console.log('Farmer auth register sync notice:', authErr.message);
+      }
+
       const saved = await saveFarmerProfile(profileToSave);
       await syncToAdminVerificationQueue(saved);
 
       // ── Live HTTP dispatch to Express backend (MongoDB persistence) ──
-      // Sends the profile to POST /api/farmers/profile so it immediately
-      // appears in MongoDB and on the Admin Verification Desk (Screen A-01).
-      // Uses PENDING_VERIFICATION as the slsiStatus so the admin sees it
-      // in their pending queue. Failures are logged but don't block the
-      // local save — the farmer can still use the app offline.
       try {
         const backendPayload = {
           ownerName: saved.legalName,
@@ -601,7 +643,7 @@ export default function FarmerOnboardingScreen() {
           city: saved.city || '',
           slsiStatus: saved.verificationStatus === 'VERIFIED' ? 'VERIFIED'
             : saved.verificationStatus === 'REJECTED' ? 'REJECTED'
-            : 'PENDING_VERIFICATION',
+              : 'PENDING_VERIFICATION',
           isSLSIVerified: saved.isSLSIVerified || false,
           slsiCertificateUrl: saved.slsiCertificateUri || '',
           bankDetails: saved.bankDetails || {},
@@ -622,12 +664,6 @@ export default function FarmerOnboardingScreen() {
       setProfile(saved);
       setIsEditingProfile(false);
 
-      // Automatically transition the user into Farmer Mode on every
-      // successful save — first-time completion (Profile tab's "Register
-      // as Farmer" entry point) or a later "Edit Profile Details" — so the
-      // dynamic bottom tab bar immediately shows the 5 Farmer tabs (My
-      // Products, Add Product, Orders, Messages, Profile) without the user
-      // needing a separate manual "Switch to Farmer Mode" tap.
       try {
         await setActiveMode('farmer');
       } catch (err) {
@@ -635,7 +671,7 @@ export default function FarmerOnboardingScreen() {
       }
 
       Alert.alert(
-        wasFirstTime ? 'Onboarding Complete' : 'Profile Updated',
+        wasFirstTime ? 'Sign Up Complete' : 'Profile Updated',
         wasFirstTime
           ? `Welcome, ${saved.legalName}! Your Farmer Dashboard is ready.`
           : 'Your farmer profile has been updated.',
@@ -902,7 +938,7 @@ export default function FarmerOnboardingScreen() {
             {/* ---------------- View Mode 1: Onboarding Form ---------------- */}
             <View style={styles.card}>
               <Text style={styles.sectionHeading}>
-                {profile ? 'Edit Profile Details' : 'Farmer Account Onboarding'}
+                {profile ? 'Edit Profile Details' : 'Sign Up as a Farmer'}
               </Text>
 
               <Field label="Legal Name *" error={onboardingErrors.legalName}>
@@ -1003,6 +1039,64 @@ export default function FarmerOnboardingScreen() {
               </Field>
             </View>
 
+            {/* ---------------- Account Password Section ---------------- */}
+            <View style={styles.card}>
+              <Text style={styles.sectionHeading}>Account Password</Text>
+              <Text style={styles.helperText}>
+                {profile
+                  ? 'Leave blank if you do not want to change your existing password.'
+                  : 'Set a secure password for your EcoHarvest farmer account (minimum 6 characters).'}
+              </Text>
+
+              <Field label={`Password ${profile ? '(Optional)' : '*'}`} error={onboardingErrors.password}>
+                <View style={styles.passwordInputContainer}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="Enter password (first time)"
+                    placeholderTextColor={tokens.colorTextMuted}
+                    secureTextEntry={!showPassword}
+                    value={password}
+                    onChangeText={setPassword}
+                  />
+                  <Pressable
+                    style={styles.eyeButton}
+                    onPress={() => setShowPassword((prev) => !prev)}
+                    hitSlop={8}
+                  >
+                    <Ionicons
+                      name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={tokens.colorTextMuted}
+                    />
+                  </Pressable>
+                </View>
+              </Field>
+
+              <Field label={`Confirm Password ${profile ? '(Optional)' : '*'}`} error={onboardingErrors.confirmPassword}>
+                <View style={styles.passwordInputContainer}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="Confirm password (second time)"
+                    placeholderTextColor={tokens.colorTextMuted}
+                    secureTextEntry={!showConfirmPassword}
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                  />
+                  <Pressable
+                    style={styles.eyeButton}
+                    onPress={() => setShowConfirmPassword((prev) => !prev)}
+                    hitSlop={8}
+                  >
+                    <Ionicons
+                      name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={tokens.colorTextMuted}
+                    />
+                  </Pressable>
+                </View>
+              </Field>
+            </View>
+
             {/* ---------------- SLSI Certification (optional) ---------------- */}
             <View style={styles.card}>
               <Text style={styles.sectionHeading}>SLSI Organic Verification</Text>
@@ -1081,8 +1175,8 @@ export default function FarmerOnboardingScreen() {
                   {isSavingProfile
                     ? 'Saving…'
                     : profile
-                    ? 'Save Changes'
-                    : 'Complete Onboarding'}
+                      ? 'Save Changes'
+                      : 'Complete Sign Up as a Farmer'}
                 </Text>
               </Pressable>
             </View>
@@ -1571,5 +1665,23 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingHorizontal: 16,
     minHeight: 36,
+  },
+  passwordInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: tokens.colorBorderGray,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+  },
+  passwordInput: {
+    flex: 1,
+    minHeight: 44,
+    fontSize: 14,
+    color: tokens.colorTextDark,
+  },
+  eyeButton: {
+    padding: 6,
   },
 });

@@ -673,7 +673,7 @@ export default function BulkOrdersScreen() {
               <Text style={styles.upgradeButtonText}>
                 {customerProfile
                   ? 'Upgrade to EcoHarvest Pro Plan (LKR 500/mo)'
-                  : 'Register as Customer & Get Pro Plan'}
+                  : 'Sign Up as a Customer & Get Pro Plan'}
               </Text>
             </Pressable>
           </View>

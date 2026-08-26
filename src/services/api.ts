@@ -55,6 +55,10 @@ export const authApi = {
     isBulkBuyer?: boolean;
     bulkAccessPlan?: string;
     password?: string;
+    farmName?: string;
+    ownerName?: string;
+    slsiCertificateUrl?: string;
+    bankDetails?: any;
     isNewRegistration?: boolean;
     userId?: string;
   }) => request<{ success: boolean; message: string; data: any }>('/auth/register', {
@@ -68,7 +72,7 @@ export const authApi = {
       body: JSON.stringify({ phoneNumber }),
     }),
 
-  login: (payload: { phoneNumber: string; password?: string }) =>
+  login: (payload: { phoneNumber?: string; fullName?: string; password?: string }) =>
     request<{ success: boolean; message: string; data: any }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(payload),

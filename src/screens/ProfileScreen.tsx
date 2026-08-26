@@ -20,7 +20,10 @@ import { Ionicons } from '@expo/vector-icons';
 import type { ProfileStackParamList } from '../navigation/TabNavigator';
 import type { AppMode, CustomerProfile, FarmerProfile, SubscriptionPlan, VerificationStatus } from '../types';
 import {
+  clearFarmerProfile,
+  clearUserProfile,
   generateCustomerId,
+  generateFarmerId,
   getActiveMode,
   getFarmerProfile,
   getFarmerFreshnessScore,
@@ -58,19 +61,19 @@ const SUBSCRIPTION_PLANS: {
   price: string;
   description: string;
 }[] = [
-  {
-    value: 'STANDARD',
-    label: 'EcoHarvest free plan',
-    price: 'Free (LKR 0)',
-    description: 'Everyday retail shopping from verified local farms.',
-  },
-  {
-    value: 'BULK_ACCESS',
-    label: 'EcoHarvest pro plan',
-    price: 'LKR 500 / mo',
-    description: 'Unlocks the AI Bulk Orders workspace for recurring volume orders.',
-  },
-];
+    {
+      value: 'STANDARD',
+      label: 'EcoHarvest free plan',
+      price: 'Free (LKR 0)',
+      description: 'Everyday retail shopping from verified local farms.',
+    },
+    {
+      value: 'BULK_ACCESS',
+      label: 'EcoHarvest pro plan',
+      price: 'LKR 500 / mo',
+      description: 'Unlocks the AI Bulk Orders workspace for recurring volume orders.',
+    },
+  ];
 
 const VERIFICATION_BADGE_CONFIG: Record<
   VerificationStatus,
@@ -227,6 +230,14 @@ export default function ProfileScreen() {
   const [isSavingFarmer, setIsSavingFarmer] = useState(false);
   const [farmerFreshness, setFarmerFreshness] = useState<FarmerFreshnessScore | null>(null);
 
+  // Sign In Modal state
+  const [isSignInModalVisible, setIsSignInModalVisible] = useState(false);
+  const [signInFullName, setSignInFullName] = useState('');
+  const [signInPassword, setSignInPassword] = useState('');
+  const [showSignInPassword, setShowSignInPassword] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState('');
+
   const loadProfiles = useCallback(async () => {
     try {
       const [customer, farmer, mode] = await Promise.all([
@@ -245,8 +256,8 @@ export default function ProfileScreen() {
               res.data.slsiStatus === 'VERIFIED' || res.data.isSLSIVerified
                 ? 'VERIFIED'
                 : res.data.slsiStatus === 'REJECTED'
-                ? 'REJECTED'
-                : farmer?.verificationStatus ?? 'PENDING_VERIFICATION';
+                  ? 'REJECTED'
+                  : farmer?.verificationStatus ?? 'PENDING_VERIFICATION';
 
             updatedFarmer = {
               ...(farmer || ({} as any)),
@@ -558,6 +569,125 @@ export default function ProfileScreen() {
     }
   };
 
+  // Sign In action (Full Name + Password)
+  const handleSignIn = async () => {
+    if (!signInFullName.trim()) {
+      setSignInError('Full name is required.');
+      return;
+    }
+    if (!signInPassword.trim()) {
+      setSignInError('Password is required.');
+      return;
+    }
+    setIsSigningIn(true);
+    setSignInError('');
+    try {
+      const res = await authApi.login({
+        fullName: signInFullName.trim(),
+        password: signInPassword.trim(),
+      });
+
+      if (res.success && res.data) {
+        const user = res.data;
+        if (user.role === 'FARMER' || user.farmerProfile) {
+          const farmerData: FarmerProfile = user.farmerProfile
+            ? {
+                id: user.farmerProfile._id || user.farmerProfile.id || generateFarmerId(),
+                legalName: user.farmerProfile.ownerName || user.fullName,
+                mobileNumber: user.farmerProfile.mobileNumber || user.phoneNumber,
+                farmName: user.farmerProfile.farmName || `${user.fullName}'s Farm`,
+                farmCoverPhotoUrl: user.farmerProfile.farmCoverPhotoUrl || undefined,
+                province: user.farmerProfile.province || user.province || '',
+                district: user.farmerProfile.district || user.district || '',
+                city: user.farmerProfile.city || user.city || '',
+                bankDetails: user.farmerProfile.bankDetails || {
+                  bankName: '',
+                  branchCode: '',
+                  accountNumber: '',
+                  accountHolderName: '',
+                },
+                slsiCertificateUri: user.farmerProfile.slsiCertificateUrl || null,
+                verificationStatus:
+                  user.farmerProfile.slsiStatus === 'VERIFIED'
+                    ? 'VERIFIED'
+                    : user.farmerProfile.slsiStatus === 'REJECTED'
+                    ? 'REJECTED'
+                    : 'PENDING_VERIFICATION',
+                isSLSIVerified:
+                  user.farmerProfile.isSLSIVerified || user.farmerProfile.slsiStatus === 'VERIFIED',
+                commissionRate: user.farmerProfile.commissionRate || 5.0,
+              }
+            : {
+                id: generateFarmerId(),
+                legalName: user.fullName,
+                mobileNumber: user.phoneNumber,
+                farmName: `${user.fullName}'s Organic Farm`,
+                province: user.province || '',
+                district: user.district || '',
+                city: user.city || '',
+                bankDetails: { bankName: '', branchCode: '', accountNumber: '', accountHolderName: '' },
+                slsiCertificateUri: null,
+                verificationStatus: 'UNVERIFIED',
+                isSLSIVerified: false,
+                commissionRate: 5.0,
+              };
+
+          await saveFarmerProfile(farmerData);
+          await setActiveMode('farmer');
+          setFarmerProfile(farmerData);
+          setActiveModeState('farmer');
+        } else {
+          const customerData: CustomerProfile = {
+            id: user.id || generateCustomerId(),
+            fullName: user.fullName,
+            phoneNumber: user.phoneNumber,
+            city: user.city || '',
+            district: user.district || '',
+            subscriptionPlan: user.subscriptionPlan || 'STANDARD',
+            favoriteFarmerIds: user.favoriteFarmerIds || [],
+            createdAt: new Date().toISOString(),
+          };
+
+          await saveUserProfile(customerData);
+          await setActiveMode('customer');
+          setCustomerProfile(customerData);
+          setActiveModeState('customer');
+        }
+
+        setIsSignInModalVisible(false);
+        setSignInFullName('');
+        setSignInPassword('');
+        Alert.alert('Welcome Back!', `Signed in successfully as ${user.fullName}.`);
+        await loadProfiles();
+      }
+    } catch (err: any) {
+      console.error('Sign in failed:', err);
+      setSignInError(err?.message || 'Invalid full name or password. Please try again.');
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  // Sign Out action
+  const handleSignOut = () => {
+    Alert.alert('Sign Out', 'Are you sure you want to sign out of your EcoHarvest account?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          await clearUserProfile();
+          await clearFarmerProfile();
+          await setActiveMode('customer');
+          setCustomerProfile(null);
+          setFarmerProfile(null);
+          setActiveModeState('customer');
+          Alert.alert('Signed Out', 'You have been signed out.');
+        },
+      },
+    ]);
+  };
+
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -675,6 +805,16 @@ export default function ProfileScreen() {
           <Ionicons name="create-outline" size={16} color={tokens.colorPrimaryGreen} style={{ marginRight: 6 }} />
           <Text style={styles.editButtonText}>Edit Details</Text>
         </Pressable>
+
+        <Pressable
+          style={styles.signOutButton}
+          onPress={handleSignOut}
+          accessibilityRole="button"
+          accessibilityLabel="Sign Out of Customer Account"
+        >
+          <Ionicons name="log-out-outline" size={16} color={tokens.colorAlertCrimson} style={{ marginRight: 6 }} />
+          <Text style={styles.signOutButtonText}>Sign Out</Text>
+        </Pressable>
       </View>
     );
   };
@@ -744,6 +884,16 @@ export default function ProfileScreen() {
           <Ionicons name="create-outline" size={16} color={tokens.colorPrimaryGreen} style={{ marginRight: 6 }} />
           <Text style={styles.editButtonText}>Edit Farm Details</Text>
         </Pressable>
+
+        <Pressable
+          style={styles.signOutButton}
+          onPress={handleSignOut}
+          accessibilityRole="button"
+          accessibilityLabel="Sign Out of Farmer Account"
+        >
+          <Ionicons name="log-out-outline" size={16} color={tokens.colorAlertCrimson} style={{ marginRight: 6 }} />
+          <Text style={styles.signOutButtonText}>Sign Out</Text>
+        </Pressable>
       </View>
     );
   };
@@ -756,8 +906,8 @@ export default function ProfileScreen() {
           isPhase1
             ? 'Account Setup'
             : activeMode === 'farmer'
-            ? 'Farmer Portal Details'
-            : 'Customer Account'
+              ? 'Farmer Portal Details'
+              : 'Customer Account'
         }
         showNotificationBell={activeMode === 'farmer'}
         rightElement={renderHeaderRight()}
@@ -767,20 +917,20 @@ export default function ProfileScreen() {
         {isPhase1 && (
           <>
             <Text style={styles.introText}>
-              Get started by registering as a customer or onboarding your farm.
+              Get started by signing up as a customer, signing up as a farmer, or signing into your existing account.
             </Text>
 
             <Pressable
               style={styles.choiceCard}
               onPress={() => navigation.navigate('RegisterCustomer')}
               accessibilityRole="button"
-              accessibilityLabel="Register as Customer"
+              accessibilityLabel="Sign Up as a customer"
             >
               <View style={styles.choiceIconContainer}>
                 <Ionicons name="cart-outline" size={24} color={tokens.colorPrimaryGreen} />
               </View>
               <View style={styles.choiceTextContainer}>
-                <Text style={styles.choiceCardTitle}>Register as Customer</Text>
+                <Text style={styles.choiceCardTitle}>Sign Up as a customer</Text>
                 <Text style={styles.choiceCardSubtitle}>
                   Shop fresh produce directly from verified local farms
                 </Text>
@@ -792,18 +942,42 @@ export default function ProfileScreen() {
               style={styles.choiceCard}
               onPress={() => navigation.navigate('FarmerOnboarding')}
               accessibilityRole="button"
-              accessibilityLabel="Register as Farmer"
+              accessibilityLabel="Sign Up as a farmer"
             >
               <View style={styles.choiceIconContainer}>
                 <Ionicons name="leaf-outline" size={24} color={tokens.colorPrimaryGreen} />
               </View>
               <View style={styles.choiceTextContainer}>
-                <Text style={styles.choiceCardTitle}>Register as Farmer</Text>
+                <Text style={styles.choiceCardTitle}>Sign Up as a farmer</Text>
                 <Text style={styles.choiceCardSubtitle}>
                   Onboard your farm and publish crops to the marketplace
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={20} color={tokens.colorTextMuted} />
+            </Pressable>
+
+            {/* Already have an account? Sign In card */}
+            <Pressable
+              style={[styles.choiceCard, styles.signInChoiceCard]}
+              onPress={() => {
+                setSignInError('');
+                setIsSignInModalVisible(true);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Already have an account? Sign In"
+            >
+              <View style={[styles.choiceIconContainer, { backgroundColor: '#F0FDF4' }]}>
+                <Ionicons name="log-in-outline" size={24} color={tokens.colorPrimaryGreen} />
+              </View>
+              <View style={styles.choiceTextContainer}>
+                <Text style={[styles.choiceCardTitle, { color: tokens.colorPrimaryGreen }]}>
+                  Already have an account? Sign In
+                </Text>
+                <Text style={styles.choiceCardSubtitle}>
+                  Sign in with your full name and password to give you access
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={tokens.colorPrimaryGreen} />
             </Pressable>
           </>
         )}
@@ -936,8 +1110,8 @@ export default function ProfileScreen() {
                       ? 'Saving…'
                       : subscriptionPlan === 'BULK_ACCESS' &&
                         customerProfile?.subscriptionPlan !== 'BULK_ACCESS'
-                      ? 'Proceed to Payment'
-                      : 'Save & Continue'}
+                        ? 'Proceed to Payment'
+                        : 'Save & Continue'}
                   </Text>
                 </Pressable>
               </View>
@@ -1116,6 +1290,107 @@ export default function ProfileScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* ---------------- Sign In Modal (Full Name + Password) ---------------- */}
+      <Modal
+        visible={isSignInModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setIsSignInModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Sign In to Account</Text>
+                <Text style={styles.modalSubtitleText}>
+                  Enter your registered full name and password
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setIsSignInModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={24} color={tokens.colorTextMuted} />
+              </Pressable>
+            </View>
+
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              {!!signInError && (
+                <View style={styles.errorAlertBox}>
+                  <Ionicons name="alert-circle-outline" size={18} color={tokens.colorAlertCrimson} />
+                  <Text style={styles.errorAlertText}>{signInError}</Text>
+                </View>
+              )}
+
+              <Field label="Full Name *">
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter the full name you gave last time"
+                  placeholderTextColor={tokens.colorTextMuted}
+                  value={signInFullName}
+                  onChangeText={(text) => {
+                    setSignInFullName(text);
+                    setSignInError('');
+                  }}
+                  autoCapitalize="words"
+                />
+              </Field>
+
+              <Field label="Password *">
+                <View style={styles.passwordInputContainer}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="Enter your password"
+                    placeholderTextColor={tokens.colorTextMuted}
+                    secureTextEntry={!showSignInPassword}
+                    value={signInPassword}
+                    onChangeText={(text) => {
+                      setSignInPassword(text);
+                      setSignInError('');
+                    }}
+                  />
+                  <Pressable
+                    style={styles.eyeButton}
+                    onPress={() => setShowSignInPassword((prev) => !prev)}
+                    hitSlop={8}
+                  >
+                    <Ionicons
+                      name={showSignInPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={tokens.colorTextMuted}
+                    />
+                  </Pressable>
+                </View>
+              </Field>
+
+              <View style={[styles.rowGap, { marginTop: 20, marginBottom: 24 }]}>
+                <Pressable
+                  style={[styles.secondaryButton, styles.flexOne]}
+                  onPress={() => setIsSignInModalVisible(false)}
+                  disabled={isSigningIn}
+                >
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.primaryButton, styles.flexOne, isSigningIn && { opacity: 0.6 }]}
+                  onPress={handleSignIn}
+                  disabled={isSigningIn}
+                >
+                  {isSigningIn ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Sign In</Text>
+                  )}
+                </Pressable>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -1130,96 +1405,178 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#DCFCE7',
     borderRadius: 20,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
-    gap: 5,
-    minHeight: 36,
   },
   headerActionButtonText: {
     fontSize: 12,
     fontWeight: '600',
     color: tokens.colorPrimaryGreen,
+    marginLeft: 4,
   },
-  scrollContent: { padding: 16, paddingTop: 12, paddingBottom: 40 },
-  introText: { fontSize: 14, color: tokens.colorTextMuted, marginBottom: 16, lineHeight: 20 },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  introText: {
+    fontSize: 14,
+    color: tokens.colorTextMuted,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
   choiceCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: tokens.colorBgCard,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: tokens.colorBorderGray,
-    borderRadius: 14,
     padding: 16,
-    minHeight: 76,
-    marginBottom: 14,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    marginBottom: 12,
+  },
+  signInChoiceCard: {
+    borderColor: '#86EFAC',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    marginTop: 4,
   },
   choiceIconContainer: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#F4F4F5',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
   },
-  choiceTextContainer: { flex: 1 },
-  choiceCardTitle: { fontSize: 16, fontWeight: '600', color: tokens.colorPrimaryGreen, marginBottom: 3 },
-  choiceCardSubtitle: { fontSize: 12, color: tokens.colorTextMuted, lineHeight: 16 },
+  choiceTextContainer: {
+    flex: 1,
+  },
+  choiceCardTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: tokens.colorTextDark,
+    marginBottom: 2,
+  },
+  choiceCardSubtitle: {
+    fontSize: 12,
+    color: tokens.colorTextMuted,
+    lineHeight: 16,
+  },
   profileCard: {
-    backgroundColor: tokens.colorBgCard,
-    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: tokens.colorBorderGray,
-    padding: 20,
+    padding: 16,
     marginBottom: 16,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  profileCardHeader: { flexDirection: 'row', alignItems: 'center' },
+  profileCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   avatarCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#DCFCE7',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
   },
-  headerInfo: { flex: 1 },
-  profileName: { fontSize: 19, fontWeight: '700', color: tokens.colorTextDark, marginBottom: 2 },
-  profileRoleCaption: { fontSize: 13, color: tokens.colorTextMuted, fontWeight: '500' },
-  divider: { height: 1, backgroundColor: tokens.colorBorderGray, marginVertical: 16 },
-  detailsGrid: { gap: 12, marginBottom: 18 },
-  detailRow: { flexDirection: 'row', alignItems: 'center' },
-  detailIcon: { marginRight: 10, width: 18 },
-  detailText: { fontSize: 14, color: tokens.colorTextDark, fontWeight: '500' },
-  planBadge: { alignSelf: 'flex-start', backgroundColor: '#DCFCE7', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  planBadgeText: { fontSize: 12, fontWeight: '600', color: tokens.colorPrimaryGreen },
-  statusBadge: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  statusBadgeText: { fontSize: 12, fontWeight: '600' },
+  headerInfo: {
+    flex: 1,
+  },
+  profileName: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: tokens.colorTextDark,
+  },
+  profileRoleCaption: {
+    fontSize: 13,
+    color: tokens.colorTextMuted,
+    marginTop: 1,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginVertical: 14,
+  },
+  detailsGrid: {
+    gap: 12,
+    marginBottom: 16,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  detailIcon: {
+    marginRight: 10,
+  },
+  detailText: {
+    fontSize: 14,
+    color: tokens.colorTextDark,
+  },
+  planBadge: {
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  planBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.colorPrimaryGreen,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
   editButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 42,
     borderWidth: 1,
-    borderColor: tokens.colorSecondaryLeaf,
-    borderRadius: 10,
+    borderColor: tokens.colorPrimaryGreen,
+    borderRadius: 8,
+    paddingVertical: 10,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
   },
-  editButtonText: { fontSize: 14, fontWeight: '600', color: tokens.colorSecondaryLeaf },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(17,24,39,0.4)', justifyContent: 'flex-end' },
+  editButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: tokens.colorPrimaryGreen,
+  },
+  signOutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    borderRadius: 8,
+    paddingVertical: 10,
+    backgroundColor: '#FEF2F2',
+    marginTop: 10,
+  },
+  signOutButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: tokens.colorAlertCrimson,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
   modalSheet: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
@@ -1227,24 +1584,91 @@ const styles = StyleSheet.create({
     padding: 20,
     maxHeight: '90%',
   },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: tokens.colorTextDark },
-  fieldWrapper: { marginBottom: 14 },
-  flexOne: { flex: 1 },
-  label: { fontSize: 13, fontWeight: '600', color: tokens.colorTextDark, marginBottom: 5 },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: tokens.colorTextDark,
+  },
+  modalSubtitleText: {
+    fontSize: 12,
+    color: tokens.colorTextMuted,
+    marginTop: 2,
+  },
+  fieldWrapper: {
+    marginBottom: 12,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.colorTextDark,
+    marginBottom: 6,
+  },
   input: {
-    minHeight: 44,
     borderWidth: 1,
     borderColor: tokens.colorBorderGray,
     borderRadius: 8,
     paddingHorizontal: 12,
+    paddingVertical: 10,
     fontSize: 14,
     color: tokens.colorTextDark,
     backgroundColor: '#FFFFFF',
   },
-  errorText: { fontSize: 12, color: tokens.colorAlertCrimson, marginTop: 4 },
-  rowGap: { flexDirection: 'row', gap: 8 },
-  dropdownWrapper: { marginBottom: 12 },
+  passwordInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: tokens.colorBorderGray,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+  },
+  passwordInput: {
+    flex: 1,
+    minHeight: 44,
+    fontSize: 14,
+    color: tokens.colorTextDark,
+  },
+  eyeButton: {
+    padding: 6,
+  },
+  errorText: {
+    fontSize: 12,
+    color: tokens.colorAlertCrimson,
+    marginTop: 4,
+  },
+  errorAlertBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+    gap: 8,
+  },
+  errorAlertText: {
+    flex: 1,
+    fontSize: 13,
+    color: tokens.colorAlertCrimson,
+    fontWeight: '500',
+  },
+  rowGap: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  flexOne: {
+    flex: 1,
+  },
+  dropdownWrapper: {
+    marginBottom: 12,
+  },
   dropdownTrigger: {
     flexDirection: 'row',
     alignItems: 'center',

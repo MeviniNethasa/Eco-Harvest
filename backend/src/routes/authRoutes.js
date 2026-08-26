@@ -204,25 +204,53 @@ router.post('/register', async (req, res) => {
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   try {
-    const { phoneNumber, password } = req.body;
-    if (!phoneNumber) {
-      return res.status(400).json({ success: false, message: 'Phone number is required' });
+    const { phoneNumber, fullName, password } = req.body;
+    if (!phoneNumber && !fullName) {
+      return res.status(400).json({ success: false, message: 'Full name or phone number is required' });
+    }
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Password is required' });
     }
 
-    const phone = phoneNumber.trim();
-    const user = await User.findOne({
-      $or: [{ phoneNumber: phone }, { mobile: phone }],
-    });
+    let user = null;
+    if (phoneNumber) {
+      const phone = phoneNumber.trim();
+      user = await User.findOne({
+        $or: [{ phoneNumber: phone }, { mobile: phone }],
+      });
+    } else if (fullName) {
+      const trimmedName = fullName.trim();
+      const escaped = trimmedName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      user = await User.findOne({
+        fullName: { $regex: new RegExp(`^${escaped}$`, 'i') },
+      });
+    }
 
     if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found with this phone number' });
+      return res.status(404).json({
+        success: false,
+        message: 'No account found with these credentials. Please check your full name or sign up.',
+      });
     }
 
-    if (password && user.password) {
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        return res.status(401).json({ success: false, message: 'Invalid password credentials' });
-      }
+    if (!user.password) {
+      return res.status(400).json({
+        success: false,
+        message: 'This account does not have a password set. Please sign up or update your profile.',
+      });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Incorrect password. Please try again.' });
+    }
+
+    // Also look up linked FarmerProfile if role is FARMER or if farmer record exists
+    let farmerProfile = null;
+    if (user.role === 'FARMER' || user.role === 'ADMIN') {
+      farmerProfile = await FarmerProfile.findOne({
+        $or: [{ userId: user._id }, { mobileNumber: user.phoneNumber }],
+      });
     }
 
     console.log(`LOGIN SUCCESS: ${user.fullName} (${user.phoneNumber}) [Role: ${user.role}]`);
@@ -244,6 +272,7 @@ router.post('/login', async (req, res) => {
         isBulkBuyer: !!user.isBulkBuyer || user.subscriptionPlan === 'BULK_ACCESS',
         bulkAccessPlan: user.bulkAccessPlan || (user.subscriptionPlan === 'BULK_ACCESS' ? 'BULK_ACCESS' : 'STANDARD'),
         favoriteFarmerIds: user.favoriteFarmerIds || [],
+        farmerProfile: farmerProfile || null,
         token,
       },
     });
