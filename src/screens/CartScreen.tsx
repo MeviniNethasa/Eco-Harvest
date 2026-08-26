@@ -14,12 +14,13 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CartItem, CartStackParamList, FarmGroup, OrderSummary } from '../types';
+import { CartItem, CartStackParamList, CustomerProfile, FarmGroup, OrderSummary } from '../types';
 import {
   getCart,
   updateCartQuantity,
@@ -27,7 +28,12 @@ import {
   groupCartByFarm,
   calculateOrderSummary,
   createOrder,
+  getUserProfile,
+  saveUserProfile,
+  generateCustomerId,
+  setActiveMode,
 } from '../utils/storage';
+import { authApi } from '../services/api';
 import HeaderBranding from '../components/HeaderBranding';
 
 // --- Design tokens (Section 1 & 2 of design.md) -----------------------------
@@ -340,6 +346,17 @@ export default function CartScreen() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [userProfile, setUserProfile] = useState<CustomerProfile | null>(null);
+
+  // Authentication Modal State for Checkout Hand-off
+  const [isAuthModalVisible, setIsAuthModalVisible] = useState(false);
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [authFullName, setAuthFullName] = useState('');
+  const [authPhone, setAuthPhone] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [authError, setAuthError] = useState('');
 
   const [cardNumber, setCardNumber] = useState('');
   const [expiry, setExpiry] = useState('');
@@ -349,8 +366,12 @@ export default function CartScreen() {
 
   const refreshCart = useCallback(async () => {
     setLoading(true);
-    const latest = await getCart();
+    const [latest, profile] = await Promise.all([
+      getCart(),
+      getUserProfile(),
+    ]);
     setCart(latest);
+    setUserProfile(profile);
     setLoading(false);
   }, []);
 
@@ -385,7 +406,104 @@ export default function CartScreen() {
     ]);
   }, []);
 
+  // Handle Sign In / Sign Up from Cart
+  const handleCartAuth = async () => {
+    if (!authFullName.trim()) {
+      setAuthError('Full name is required.');
+      return;
+    }
+    if (authMode === 'signup' && !authPhone.trim()) {
+      setAuthError('Phone number is required.');
+      return;
+    }
+    if (!authPassword.trim() || authPassword.length < 6) {
+      setAuthError('Password must be at least 6 characters.');
+      return;
+    }
+
+    setIsAuthenticating(true);
+    setAuthError('');
+    try {
+      if (authMode === 'signup') {
+        const regRes = await authApi.register({
+          fullName: authFullName.trim(),
+          phoneNumber: authPhone.trim(),
+          password: authPassword.trim(),
+          role: 'CUSTOMER',
+          city: 'Colombo',
+          district: 'Colombo',
+          province: 'Western',
+        });
+
+        if (regRes.success && regRes.data) {
+          const user = regRes.data;
+          const newProfile: CustomerProfile = {
+            id: user.id || generateCustomerId(),
+            fullName: user.fullName || authFullName.trim(),
+            phoneNumber: user.phoneNumber || authPhone.trim(),
+            city: user.city || 'Colombo',
+            district: user.district || 'Colombo',
+            subscriptionPlan: 'STANDARD',
+            favoriteFarmerIds: [],
+            createdAt: new Date().toISOString(),
+          };
+          await saveUserProfile(newProfile);
+          await setActiveMode('customer');
+          setUserProfile(newProfile);
+          setIsAuthModalVisible(false);
+          setAuthFullName('');
+          setAuthPhone('');
+          setAuthPassword('');
+          Alert.alert('Welcome to EcoHarvest!', `Signed up as ${newProfile.fullName}. You can now complete your checkout.`);
+        } else {
+          setAuthError(regRes.message || 'Registration failed.');
+        }
+      } else {
+        const loginRes = await authApi.login({
+          fullName: authFullName.trim(),
+          password: authPassword.trim(),
+        });
+
+        if (loginRes.success && loginRes.data) {
+          const user = loginRes.data;
+          const customerData: CustomerProfile = {
+            id: user.id || generateCustomerId(),
+            fullName: user.fullName,
+            phoneNumber: user.phoneNumber,
+            city: user.city || '',
+            district: user.district || '',
+            subscriptionPlan: user.subscriptionPlan || 'STANDARD',
+            favoriteFarmerIds: user.favoriteFarmerIds || [],
+            createdAt: new Date().toISOString(),
+          };
+          await saveUserProfile(customerData);
+          await setActiveMode('customer');
+          setUserProfile(customerData);
+          setIsAuthModalVisible(false);
+          setAuthFullName('');
+          setAuthPassword('');
+          Alert.alert('Welcome Back!', `Signed in as ${user.fullName}. You can now proceed to pay.`);
+        } else {
+          setAuthError(loginRes.message || 'Invalid full name or password.');
+        }
+      }
+    } catch (err: any) {
+      setAuthError(err.message || 'Authentication failed. Please try again.');
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
   const handlePay = useCallback(async () => {
+    // Redirect / prompt to sign in if not logged in
+    const profile = await getUserProfile();
+    if (!profile) {
+      setAuthMode('signin');
+      setAuthError('');
+      setIsAuthModalVisible(true);
+      return;
+    }
+
     const validationErrors = validateForm(cardNumber, expiry, cvc, postalCode);
     setErrors(validationErrors);
     if (Object.keys(validationErrors).length > 0) {
@@ -477,6 +595,44 @@ export default function CartScreen() {
 
             <OrderSummaryCard summary={summary} />
 
+            {/* If user is not logged in, show prominent Sign In prompt card */}
+            {!userProfile && (
+              <View style={styles.authBanner}>
+                <View style={styles.authBannerIconBox}>
+                  <Ionicons name="lock-closed" size={22} color="#15803D" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.authBannerTitle}>Sign in to complete checkout</Text>
+                  <Text style={styles.authBannerSubtitle}>
+                    Please sign in or create an account so we can link your delivery address and order tracking.
+                  </Text>
+                  <View style={styles.authBannerBtnRow}>
+                    <Pressable
+                      style={styles.authBannerSignInBtn}
+                      onPress={() => {
+                        setAuthMode('signin');
+                        setAuthError('');
+                        setIsAuthModalVisible(true);
+                      }}
+                    >
+                      <Ionicons name="log-in-outline" size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.authBannerSignInBtnText}>Sign In</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.authBannerSignUpBtn}
+                      onPress={() => {
+                        setAuthMode('signup');
+                        setAuthError('');
+                        setIsAuthModalVisible(true);
+                      }}
+                    >
+                      <Text style={styles.authBannerSignUpBtnText}>Sign Up</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            )}
+
             <StripeTestPaymentBox
               cardNumber={cardNumber}
               expiry={expiry}
@@ -500,13 +656,183 @@ export default function CartScreen() {
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <Text style={styles.payButtonText}>
-                  Pay {formatLKR(summary.grandTotal)} via Stripe
+                  {!userProfile
+                    ? `Sign In to Pay ${formatLKR(summary.grandTotal)}`
+                    : `Pay ${formatLKR(summary.grandTotal)} via Stripe`}
                 </Text>
               )}
             </Pressable>
           </View>
         </>
       )}
+
+      {/* ---------------- Checkout Authentication Modal ---------------- */}
+      <Modal
+        visible={isAuthModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setIsAuthModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={styles.modalIconBox}>
+                  <Ionicons name="cart" size={20} color="#15803D" />
+                </View>
+                <View>
+                  <Text style={styles.modalTitle}>
+                    {authMode === 'signin' ? 'Sign In to Pay' : 'Create Customer Account'}
+                  </Text>
+                  <Text style={styles.modalSubtitle}>
+                    {authMode === 'signin'
+                      ? 'Enter your name and password to continue'
+                      : 'Sign up to place your order and track delivery'}
+                  </Text>
+                </View>
+              </View>
+              <Pressable onPress={() => setIsAuthModalVisible(false)} hitSlop={10}>
+                <Ionicons name="close" size={22} color="#6B7280" />
+              </Pressable>
+            </View>
+
+            {/* Toggle Tabs */}
+            <View style={styles.authToggleRow}>
+              <Pressable
+                style={[styles.authToggleBtn, authMode === 'signin' && styles.authToggleBtnActive]}
+                onPress={() => {
+                  setAuthMode('signin');
+                  setAuthError('');
+                }}
+              >
+                <Text
+                  style={[
+                    styles.authToggleBtnText,
+                    authMode === 'signin' && styles.authToggleBtnTextActive,
+                  ]}
+                >
+                  Sign In
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.authToggleBtn, authMode === 'signup' && styles.authToggleBtnActive]}
+                onPress={() => {
+                  setAuthMode('signup');
+                  setAuthError('');
+                }}
+              >
+                <Text
+                  style={[
+                    styles.authToggleBtnText,
+                    authMode === 'signup' && styles.authToggleBtnTextActive,
+                  ]}
+                >
+                  New Customer? Sign Up
+                </Text>
+              </Pressable>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={styles.modalBody}
+              keyboardShouldPersistTaps="handled"
+            >
+              {!!authError && (
+                <View style={styles.authErrorBox}>
+                  <Ionicons name="alert-circle" size={16} color="#DC2626" />
+                  <Text style={styles.authErrorText}>{authError}</Text>
+                </View>
+              )}
+
+              <View style={styles.modalField}>
+                <Text style={styles.modalFieldLabel}>Full Name *</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g. John Perera"
+                  placeholderTextColor="#9CA3AF"
+                  value={authFullName}
+                  onChangeText={(text) => {
+                    setAuthFullName(text);
+                    setAuthError('');
+                  }}
+                  autoCapitalize="words"
+                />
+              </View>
+
+              {authMode === 'signup' && (
+                <View style={styles.modalField}>
+                  <Text style={styles.modalFieldLabel}>Phone Number *</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="07X XXXXXXX"
+                    placeholderTextColor="#9CA3AF"
+                    keyboardType="phone-pad"
+                    value={authPhone}
+                    onChangeText={(text) => {
+                      setAuthPhone(text);
+                      setAuthError('');
+                    }}
+                    maxLength={10}
+                  />
+                </View>
+              )}
+
+              <View style={styles.modalField}>
+                <Text style={styles.modalFieldLabel}>Password *</Text>
+                <View style={styles.passwordContainer}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="Enter your password (min 6 chars)"
+                    placeholderTextColor="#9CA3AF"
+                    secureTextEntry={!showAuthPassword}
+                    value={authPassword}
+                    onChangeText={(text) => {
+                      setAuthPassword(text);
+                      setAuthError('');
+                    }}
+                  />
+                  <Pressable
+                    style={styles.eyeBtn}
+                    onPress={() => setShowAuthPassword((prev) => !prev)}
+                    hitSlop={8}
+                  >
+                    <Ionicons
+                      name={showAuthPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color="#6B7280"
+                    />
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={styles.modalActionRow}>
+                <Pressable
+                  style={styles.modalCancelBtn}
+                  onPress={() => setIsAuthModalVisible(false)}
+                  disabled={isAuthenticating}
+                >
+                  <Text style={styles.modalCancelBtnText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.modalSubmitBtn, isAuthenticating && { opacity: 0.6 }]}
+                  onPress={handleCartAuth}
+                  disabled={isAuthenticating}
+                >
+                  {isAuthenticating ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.modalSubmitBtnText}>
+                      {authMode === 'signin' ? 'Sign In & Continue' : 'Sign Up & Continue'}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -791,6 +1117,238 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     letterSpacing: 0.25,
+    color: '#FFFFFF',
+  },
+
+  // Auth Banner in Cart
+  authBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+    borderRadius: 12,
+    padding: 14,
+    gap: 12,
+    marginBottom: 16,
+  },
+  authBannerIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  authBannerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  authBannerSubtitle: {
+    fontSize: 12,
+    color: '#4B5563',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  authBannerBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  authBannerSignInBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#15803D',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  authBannerSignInBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  authBannerSignUpBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  authBannerSignUpBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+
+  // Auth Modal Styles
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 480,
+    maxHeight: '90%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  modalIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F0FDF4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 1,
+  },
+  authToggleRow: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    padding: 4,
+    marginHorizontal: 20,
+    marginTop: 14,
+    borderRadius: 10,
+  },
+  authToggleBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  authToggleBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  authToggleBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  authToggleBtnTextActive: {
+    color: '#15803D',
+    fontWeight: '700',
+  },
+  modalBody: {
+    padding: 20,
+    gap: 12,
+  },
+  authErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    padding: 10,
+    borderRadius: 8,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+  },
+  authErrorText: {
+    fontSize: 12,
+    color: '#DC2626',
+    flex: 1,
+  },
+  modalField: {
+    gap: 4,
+  },
+  modalFieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  modalInput: {
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: '#111827',
+    backgroundColor: '#FAFAFA',
+  },
+  passwordContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    backgroundColor: '#FAFAFA',
+    paddingHorizontal: 12,
+  },
+  passwordInput: {
+    flex: 1,
+    height: 44,
+    fontSize: 14,
+    color: '#111827',
+  },
+  eyeBtn: {
+    padding: 6,
+  },
+  modalActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    height: 44,
+    backgroundColor: '#F4F4F5',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  modalSubmitBtn: {
+    flex: 2,
+    height: 44,
+    backgroundColor: '#15803D',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalSubmitBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
     color: '#FFFFFF',
   },
 });
