@@ -397,3 +397,88 @@ export const adminApi = {
       method: 'POST',
     }),
 };
+
+// ---------------------------------------------------------------------------
+// Help Desk & Support Ticket API
+// ---------------------------------------------------------------------------
+export const helpDeskApi = {
+  createTicket: (payload: {
+    userId: string;
+    userName: string;
+    userRole?: 'CUSTOMER' | 'FARMER';
+    userPhone?: string;
+    orderId?: string;
+    category?: string;
+    subject: string;
+    priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    message: string;
+  }) =>
+    request<{ success: boolean; message: string; data: any }>('/helpdesk/tickets', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getUserTickets: (userId: string) =>
+    request<{ success: boolean; count: number; data: any[] }>(`/helpdesk/tickets/user/${userId}`),
+
+  getTicketDetails: (ticketId: string) =>
+    request<{ success: boolean; data: any }>(`/helpdesk/tickets/${ticketId}`),
+
+  sendMessage: (
+    ticketId: string,
+    payload: {
+      senderRole: 'CUSTOMER' | 'FARMER' | 'ADMIN' | 'SYSTEM';
+      senderId?: string;
+      senderName: string;
+      text: string;
+    }
+  ) =>
+    request<{ success: boolean; message: string; data: any }>(`/helpdesk/tickets/${ticketId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getAdminTickets: (params?: {
+    status?: string;
+    userRole?: string;
+    priority?: string;
+    search?: string;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.status) query.append('status', params.status);
+    if (params?.userRole) query.append('userRole', params.userRole);
+    if (params?.priority) query.append('priority', params.priority);
+    if (params?.search) query.append('search', params.search);
+    const queryString = query.toString() ? `?${query.toString()}` : '';
+    return request<{ success: boolean; count: number; data: any[] }>(`/helpdesk/admin/tickets${queryString}`);
+  },
+
+  updateTicketStatus: (
+    ticketId: string,
+    payload: {
+      status?: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+      resolutionNotes?: string;
+      adminName?: string;
+    }
+  ) =>
+    request<{ success: boolean; message: string; data: any }>(`/helpdesk/admin/tickets/${ticketId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  getStats: () =>
+    request<{
+      success: boolean;
+      data: {
+        total: number;
+        open: number;
+        inProgress: number;
+        resolved: number;
+        closed: number;
+        customerCount: number;
+        farmerCount: number;
+        pendingCount: number;
+      };
+    }>('/helpdesk/admin/stats'),
+};
+

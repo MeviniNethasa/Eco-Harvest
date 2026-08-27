@@ -6,12 +6,14 @@ import { Ionicons } from '@expo/vector-icons';
 import HeaderBranding from './HeaderBranding';
 import FarmerNotificationModal from './FarmerNotificationModal';
 import { getUnreadNotificationCount, subscribeToNotifications } from '../utils/storage';
+import { openHelpDesk } from './HelpDeskFloatingBadge';
 
 interface StandardHeaderProps {
   title?: string;
   subtitle?: string;
   showBranding?: boolean;
   showNotificationBell?: boolean;
+  showHelpDeskButton?: boolean;
   rightElement?: React.ReactNode;
   onBack?: () => void;
 }
@@ -21,6 +23,7 @@ export default function StandardHeader({
   subtitle,
   showBranding = true,
   showNotificationBell = false,
+  showHelpDeskButton = true,
   rightElement,
   onBack,
 }: StandardHeaderProps) {
@@ -37,6 +40,21 @@ export default function StandardHeader({
       return unsub;
     }
   }, [showNotificationBell]);
+
+  const renderHelpButton = () => {
+    if (!showHelpDeskButton) return null;
+    return (
+      <Pressable
+        style={styles.helpButton}
+        onPress={() => openHelpDesk()}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="EcoHarvest Help Desk"
+      >
+        <Ionicons name="headset-outline" size={20} color="#15803D" />
+      </Pressable>
+    );
+  };
 
   const renderBell = () => {
     if (!showNotificationBell) return null;
@@ -64,6 +82,7 @@ export default function StandardHeader({
         <View style={styles.brandingRow}>
           <HeaderBranding />
           <View style={styles.rightSlot}>
+            {renderHelpButton()}
             {renderBell()}
             {rightElement}
           </View>
@@ -89,6 +108,7 @@ export default function StandardHeader({
           </View>
           {!showBranding && (
             <View style={styles.rightSlot}>
+              {renderHelpButton()}
               {renderBell()}
               {rightElement}
             </View>
@@ -125,6 +145,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  helpButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F0FDF4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
   },
   bellButton: {
     width: 36,

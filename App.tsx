@@ -6,6 +6,7 @@ import TabNavigator from './src/navigation/TabNavigator';
 import SplashScreen from './src/screens/SplashScreen';
 import AdminPortalScreen from './src/admin/AdminPortalScreen';
 import FeedbackPopup from './src/components/FeedbackPopup';
+import HelpDeskFloatingBadge from './src/components/HelpDeskFloatingBadge';
 
 /**
  * Web-only helper: is the current browser URL under `/admin`?
@@ -85,6 +86,7 @@ export default function App() {
       <Animated.View style={[styles.flexFill, { opacity: splashOpacity }]}>
         <SplashScreen onFinish={handleSplashFinish} />
         <FeedbackPopup />
+        <HelpDeskFloatingBadge />
       </Animated.View>
     );
   }
@@ -93,6 +95,7 @@ export default function App() {
     <>
       <TabNavigator />
       <FeedbackPopup />
+      <HelpDeskFloatingBadge />
     </>
   );
 }

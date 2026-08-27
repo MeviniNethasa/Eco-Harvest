@@ -41,6 +41,7 @@ import StripeCheckoutModal from '../components/StripeCheckoutModal';
 import MapLocationPickerModal, { SelectedLocationData } from '../components/MapLocationPickerModal';
 import { authApi, farmerApi, stripeApi } from '../services/api';
 import { showFeedback, showToast } from '../components/FeedbackPopup';
+import { openHelpDesk } from '../components/HelpDeskFloatingBadge';
 
 type ProfileNavProp = NativeStackNavigationProp<ProfileStackParamList, 'ProfileHome'>;
 
@@ -769,6 +770,16 @@ export default function ProfileScreen() {
         </View>
 
         <Pressable
+          style={styles.helpDeskButton}
+          onPress={() => openHelpDesk()}
+          accessibilityRole="button"
+          accessibilityLabel="Open EcoHarvest Help Desk"
+        >
+          <Ionicons name="headset-outline" size={16} color="#15803D" style={{ marginRight: 6 }} />
+          <Text style={styles.helpDeskButtonText}>Help Desk & Dispute Support</Text>
+        </Pressable>
+
+        <Pressable
           style={styles.editButton}
           onPress={openRegisterModal}
           accessibilityRole="button"
@@ -846,6 +857,16 @@ export default function ProfileScreen() {
             </View>
           </View>
         </View>
+
+        <Pressable
+          style={styles.helpDeskButton}
+          onPress={() => openHelpDesk()}
+          accessibilityRole="button"
+          accessibilityLabel="Open EcoHarvest Help Desk"
+        >
+          <Ionicons name="headset-outline" size={16} color="#15803D" style={{ marginRight: 6 }} />
+          <Text style={styles.helpDeskButtonText}>Farmer Help Desk & Support</Text>
+        </Pressable>
 
         <Pressable
           style={styles.editButton}
@@ -1706,6 +1727,22 @@ const styles = StyleSheet.create({
   statusBadgeText: {
     fontSize: 12,
     fontWeight: '600',
+  },
+  helpDeskButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    borderRadius: 8,
+    paddingVertical: 10,
+    backgroundColor: '#F0FDF4',
+    marginBottom: 10,
+  },
+  helpDeskButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#15803D',
   },
   editButton: {
     flexDirection: 'row',

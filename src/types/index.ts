@@ -660,3 +660,50 @@ export type OrdersStackParamList = {
   OrderTracking: { orderId: string };
   Chat: { threadId?: string; recipientName?: string; userRole?: 'CUSTOMER' | 'FARMER' };
 };
+
+// ---------------------------------------------------------------------------
+// Help Desk & Support Ticket System (Customer, Farmer & Admin)
+// ---------------------------------------------------------------------------
+
+export type HelpTicketCategory =
+  | 'ORDER_DELIVERY'
+  | 'PAYMENT_ESCROW'
+  | 'CROP_QUALITY'
+  | 'SLSI_VERIFICATION'
+  | 'ACCOUNT_SETTINGS'
+  | 'COMMISSION_PAYOUT'
+  | 'APP_FEEDBACK'
+  | 'OTHER';
+
+export type HelpTicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export type HelpTicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+
+export interface HelpTicketMessage {
+  _id?: string;
+  senderRole: 'CUSTOMER' | 'FARMER' | 'ADMIN' | 'SYSTEM';
+  senderId?: string;
+  senderName: string;
+  text: string;
+  timestamp: string | Date;
+}
+
+export interface HelpTicket {
+  _id?: string;
+  ticketId: string;
+  userId: string;
+  userName: string;
+  userRole: 'CUSTOMER' | 'FARMER';
+  userPhone?: string;
+  orderId?: string;
+  category: HelpTicketCategory;
+  subject: string;
+  priority: HelpTicketPriority;
+  status: HelpTicketStatus;
+  messages: HelpTicketMessage[];
+  resolutionNotes?: string;
+  resolvedAt?: string | Date;
+  assignedAdmin?: string;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+}

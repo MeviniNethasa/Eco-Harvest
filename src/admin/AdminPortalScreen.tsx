@@ -22,8 +22,9 @@ import VerificationDeskTab from './screens/VerificationDeskTab';
 import ModeratedChatTab from './screens/ModeratedChatTab';
 import EscrowLogisticsTab from './screens/EscrowLogisticsTab';
 import EcosystemAnalyticsTab from './screens/EcosystemAnalyticsTab';
+import HelpDeskTab from './screens/HelpDeskTab';
 
-type AdminTab = 'VERIFICATION' | 'MODERATION' | 'ESCROW' | 'ANALYTICS';
+type AdminTab = 'VERIFICATION' | 'MODERATION' | 'ESCROW' | 'ANALYTICS' | 'HELP_DESK';
 
 interface NavItem {
   id: AdminTab;
@@ -61,6 +62,13 @@ const NAV_ITEMS: NavItem[] = [
     subtitle: 'Health & Demand Gap Map',
     icon: 'bar-chart',
     code: 'A-04',
+  },
+  {
+    id: 'HELP_DESK',
+    title: 'Help Desk & Disputes',
+    subtitle: 'Customer & Farmer Resolution',
+    icon: 'headset',
+    code: 'A-05',
   },
 ];
 
@@ -198,6 +206,7 @@ export default function AdminPortalScreen() {
             {activeTab === 'MODERATION' && <ModeratedChatTab key={lastRefreshed} />}
             {activeTab === 'ESCROW' && <EscrowLogisticsTab key={lastRefreshed} />}
             {activeTab === 'ANALYTICS' && <EcosystemAnalyticsTab key={lastRefreshed} />}
+            {activeTab === 'HELP_DESK' && <HelpDeskTab key={lastRefreshed} />}
           </View>
         </View>
       </View>

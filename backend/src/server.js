@@ -33,6 +33,7 @@ app.use('/api/stripe', require('./routes/stripeRoutes'));
 app.use('/api/farmers', require('./routes/farmerRoutes'));
 app.use('/api/ai', require('./routes/aiRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
+app.use('/api/helpdesk', require('./routes/helpDeskRoutes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

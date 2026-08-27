@@ -20,6 +20,11 @@ import {
   FarmerProfile,
   FarmGroup,
   GeoCoordinate,
+  HelpTicket,
+  HelpTicketCategory,
+  HelpTicketMessage,
+  HelpTicketPriority,
+  HelpTicketStatus,
   NotificationRole,
   Order,
   OrderStatus,
@@ -30,9 +35,10 @@ import {
   VerificationRequest,
 } from '../types';
 import { MOCK_CROPS, MOCK_FARMERS } from '../data/mockData';
-import { aiApi, messageApi, orderApi, stripeApi } from '../services/api';
+import { aiApi, helpDeskApi, messageApi, orderApi, stripeApi } from '../services/api';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
+const HELP_TICKETS_STORAGE_KEY = '@ecoharvest/help-tickets';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
 const FARMER_PROFILE_STORAGE_KEY = '@ecoharvest/farmer-profile';
 const USER_PROFILE_KEY = '@ecoharvest/user-profile';
@@ -2965,4 +2971,311 @@ export async function addNotification(
 export async function clearNotifications(): Promise<void> {
   await AsyncStorage.removeItem(NOTIFICATIONS_STORAGE_KEY);
   notifyNotificationListeners([]);
+}
+
+// ---------------------------------------------------------------------------
+// Help Desk & Dispute Resolution Storage Engine
+// ---------------------------------------------------------------------------
+
+type HelpTicketListener = (tickets: HelpTicket[]) => void;
+const helpTicketListeners = new Set<HelpTicketListener>();
+
+function notifyHelpTicketListeners(tickets: HelpTicket[]): void {
+  helpTicketListeners.forEach((l) => l(tickets));
+}
+
+export function subscribeToHelpTickets(listener: HelpTicketListener): () => void {
+  helpTicketListeners.add(listener);
+  return () => helpTicketListeners.delete(listener);
+}
+
+const DEMO_HELP_TICKETS: HelpTicket[] = [
+  {
+    ticketId: 'HD-8021',
+    userId: 'cust_001',
+    userName: 'Kavinda Perera',
+    userRole: 'CUSTOMER',
+    userPhone: '+94 77 123 4567',
+    orderId: 'ORD-9842',
+    category: 'ORDER_DELIVERY',
+    subject: 'Delayed Organic Carrot Delivery in Colombo 07',
+    priority: 'HIGH',
+    status: 'IN_PROGRESS',
+    messages: [
+      {
+        senderRole: 'CUSTOMER',
+        senderId: 'cust_001',
+        senderName: 'Kavinda Perera',
+        text: 'Hi support, my order ORD-9842 was scheduled for delivery 2 hours ago via Uber logistics, but driver location shows stuck in Rajagiriya. Can you check?',
+        timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
+      },
+      {
+        senderRole: 'ADMIN',
+        senderId: 'admin_01',
+        senderName: 'EcoHarvest Admin',
+        text: 'Hello Kavinda, we reached out to the Uber Direct dispatch fleet. The driver was delayed due to heavy rain on Baseline Road and is now en route. Expected arrival is within 25 minutes.',
+        timestamp: new Date(Date.now() - 3600000 * 1).toISOString(),
+      },
+    ],
+    resolutionNotes: 'Logistics dispatched driver with priority weather override.',
+    createdAt: new Date(Date.now() - 3600000 * 3).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 1).toISOString(),
+  },
+  {
+    ticketId: 'HD-8022',
+    userId: 'farmer_demo_1',
+    userName: 'Sunil Rathnayake',
+    userRole: 'FARMER',
+    userPhone: '+94 71 888 9999',
+    category: 'SLSI_VERIFICATION',
+    subject: 'SLS 1324 Organic Certificate Re-Audit Submission',
+    priority: 'MEDIUM',
+    status: 'OPEN',
+    messages: [
+      {
+        senderRole: 'FARMER',
+        senderId: 'farmer_demo_1',
+        senderName: 'Sunil Rathnayake (Green Valley Farm)',
+        text: 'Good day admin, I have re-uploaded our updated SLSI annual soil test report SLS 1324:2018 for Nuwara Eliya acreage. Please verify so our commission stays at 2.5%.',
+        timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
+      },
+    ],
+    createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 5).toISOString(),
+  },
+  {
+    ticketId: 'HD-8019',
+    userId: 'cust_002',
+    userName: 'Amara Fernando',
+    userRole: 'CUSTOMER',
+    userPhone: '+94 72 345 6789',
+    orderId: 'ORD-9701',
+    category: 'PAYMENT_ESCROW',
+    subject: 'Stripe Escrow Release Confirmation',
+    priority: 'LOW',
+    status: 'RESOLVED',
+    messages: [
+      {
+        senderRole: 'CUSTOMER',
+        senderId: 'cust_002',
+        senderName: 'Amara Fernando',
+        text: 'The fresh passion fruits arrived in pristine condition. I confirmed delivery in the app. Did the farmer receive the payout?',
+        timestamp: new Date(Date.now() - 86400000 * 2).toISOString(),
+      },
+      {
+        senderRole: 'ADMIN',
+        senderId: 'admin_01',
+        senderName: 'EcoHarvest Admin',
+        text: 'Hi Amara! Yes, Stripe payment intent pi_mock_9701 was successfully released from escrow to the farmer bank account. Thank you for supporting organic agriculture!',
+        timestamp: new Date(Date.now() - 86400000 * 2 + 1800000).toISOString(),
+      },
+    ],
+    resolutionNotes: 'Escrow payment verified released on delivery confirmation.',
+    resolvedAt: new Date(Date.now() - 86400000 * 2 + 1800000).toISOString(),
+    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+    updatedAt: new Date(Date.now() - 86400000 * 2 + 1800000).toISOString(),
+  },
+];
+
+export async function getAllHelpTickets(): Promise<HelpTicket[]> {
+  try {
+    // Attempt to fetch from backend API first
+    const res = await helpDeskApi.getAdminTickets();
+    if (res && res.data && res.data.length > 0) {
+      await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(res.data));
+      notifyHelpTicketListeners(res.data);
+      return res.data;
+    }
+  } catch (err) {
+    // Fallback to local storage
+  }
+
+  try {
+    const raw = await AsyncStorage.getItem(HELP_TICKETS_STORAGE_KEY);
+    if (raw) {
+      return JSON.parse(raw) as HelpTicket[];
+    }
+    await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(DEMO_HELP_TICKETS));
+    notifyHelpTicketListeners(DEMO_HELP_TICKETS);
+    return DEMO_HELP_TICKETS;
+  } catch {
+    return DEMO_HELP_TICKETS;
+  }
+}
+
+export async function getUserHelpTickets(userId?: string, role?: 'CUSTOMER' | 'FARMER'): Promise<HelpTicket[]> {
+  const all = await getAllHelpTickets();
+  if (!userId) {
+    return role ? all.filter((t) => t.userRole === role) : all;
+  }
+  const userTickets = all.filter((t) => t.userId === userId || (!t.userId && t.userRole === role));
+  // If specific user has no tickets yet, return demo tickets matching their role so the UI is active
+  if (userTickets.length === 0 && role) {
+    return all.filter((t) => t.userRole === role);
+  }
+  return userTickets.length > 0 ? userTickets : all;
+}
+
+export async function createHelpTicketLocal(payload: {
+  userId: string;
+  userName: string;
+  userRole: 'CUSTOMER' | 'FARMER';
+  userPhone?: string;
+  orderId?: string;
+  category: HelpTicketCategory;
+  subject: string;
+  priority?: HelpTicketPriority;
+  message: string;
+}): Promise<HelpTicket> {
+  const newTicketId = `HD-${Math.floor(1000 + Math.random() * 9000)}`;
+  const newTicket: HelpTicket = {
+    ticketId: newTicketId,
+    userId: payload.userId,
+    userName: payload.userName,
+    userRole: payload.userRole,
+    userPhone: payload.userPhone || '',
+    orderId: payload.orderId || '',
+    category: payload.category,
+    subject: payload.subject,
+    priority: payload.priority || 'MEDIUM',
+    status: 'OPEN',
+    messages: [
+      {
+        senderRole: payload.userRole,
+        senderId: payload.userId,
+        senderName: payload.userName,
+        text: payload.message,
+        timestamp: new Date().toISOString(),
+      },
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  try {
+    const apiRes = await helpDeskApi.createTicket(payload);
+    if (apiRes && apiRes.data) {
+      const tickets = await getAllHelpTickets();
+      const updated = [apiRes.data, ...tickets.filter((t) => t.ticketId !== apiRes.data.ticketId)];
+      await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(updated));
+      notifyHelpTicketListeners(updated);
+      return apiRes.data;
+    }
+  } catch (err) {
+    console.warn('Backend ticket creation offline fallback:', err);
+  }
+
+  const all = await getAllHelpTickets();
+  const updated = [newTicket, ...all];
+  await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(updated));
+  notifyHelpTicketListeners(updated);
+  return newTicket;
+}
+
+export async function sendHelpTicketReply(
+  ticketId: string,
+  reply: {
+    senderRole: 'CUSTOMER' | 'FARMER' | 'ADMIN' | 'SYSTEM';
+    senderId?: string;
+    senderName: string;
+    text: string;
+  }
+): Promise<HelpTicket | null> {
+  try {
+    const res = await helpDeskApi.sendMessage(ticketId, reply);
+    if (res && res.data) {
+      const all = await getAllHelpTickets();
+      const updated = all.map((t) => (t.ticketId === ticketId ? res.data : t));
+      await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(updated));
+      notifyHelpTicketListeners(updated);
+      return res.data;
+    }
+  } catch (err) {
+    console.warn('Backend ticket reply offline fallback:', err);
+  }
+
+  const all = await getAllHelpTickets();
+  const existing = all.find((t) => t.ticketId === ticketId);
+  if (!existing) return null;
+
+  const newMsg: HelpTicketMessage = {
+    senderRole: reply.senderRole,
+    senderId: reply.senderId || '',
+    senderName: reply.senderName,
+    text: reply.text,
+    timestamp: new Date().toISOString(),
+  };
+
+  let newStatus = existing.status;
+  if (reply.senderRole === 'ADMIN' && existing.status === 'OPEN') {
+    newStatus = 'IN_PROGRESS';
+  } else if (reply.senderRole !== 'ADMIN' && (existing.status === 'RESOLVED' || existing.status === 'CLOSED')) {
+    newStatus = 'OPEN';
+  }
+
+  const updatedTicket: HelpTicket = {
+    ...existing,
+    status: newStatus,
+    messages: [...existing.messages, newMsg],
+    updatedAt: new Date().toISOString(),
+  };
+
+  const updated = all.map((t) => (t.ticketId === ticketId ? updatedTicket : t));
+  await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(updated));
+  notifyHelpTicketListeners(updated);
+  return updatedTicket;
+}
+
+export async function updateHelpTicketStatusLocal(
+  ticketId: string,
+  status: HelpTicketStatus,
+  resolutionNotes?: string,
+  adminName = 'Admin Team'
+): Promise<HelpTicket | null> {
+  try {
+    const res = await helpDeskApi.updateTicketStatus(ticketId, { status, resolutionNotes, adminName });
+    if (res && res.data) {
+      const all = await getAllHelpTickets();
+      const updated = all.map((t) => (t.ticketId === ticketId ? res.data : t));
+      await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(updated));
+      notifyHelpTicketListeners(updated);
+      return res.data;
+    }
+  } catch (err) {
+    console.warn('Backend ticket status update offline fallback:', err);
+  }
+
+  const all = await getAllHelpTickets();
+  const existing = all.find((t) => t.ticketId === ticketId);
+  if (!existing) return null;
+
+  const msgs = [...existing.messages];
+  if (resolutionNotes) {
+    msgs.push({
+      senderRole: 'ADMIN',
+      senderId: 'admin_desk',
+      senderName: adminName,
+      text: `[RESOLUTION NOTE]: ${resolutionNotes}`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  const updatedTicket: HelpTicket = {
+    ...existing,
+    status,
+    messages: msgs,
+    resolutionNotes: resolutionNotes || existing.resolutionNotes,
+    resolvedAt: status === 'RESOLVED' || status === 'CLOSED' ? new Date().toISOString() : existing.resolvedAt,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const updated = all.map((t) => (t.ticketId === ticketId ? updatedTicket : t));
+  await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(updated));
+  notifyHelpTicketListeners(updated);
+  return updatedTicket;
+}
+
+export async function getOpenHelpTicketCount(role?: 'CUSTOMER' | 'FARMER'): Promise<number> {
+  const tickets = await getAllHelpTickets();
+  return tickets.filter((t) => (t.status === 'OPEN' || t.status === 'IN_PROGRESS') && (!role || t.userRole === role)).length;
 }
