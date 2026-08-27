@@ -2989,99 +2989,11 @@ export function subscribeToHelpTickets(listener: HelpTicketListener): () => void
   return () => helpTicketListeners.delete(listener);
 }
 
-const DEMO_HELP_TICKETS: HelpTicket[] = [
-  {
-    ticketId: 'HD-8021',
-    userId: 'cust_001',
-    userName: 'Kavinda Perera',
-    userRole: 'CUSTOMER',
-    userPhone: '+94 77 123 4567',
-    orderId: 'ORD-9842',
-    category: 'ORDER_DELIVERY',
-    subject: 'Delayed Organic Carrot Delivery in Colombo 07',
-    priority: 'HIGH',
-    status: 'IN_PROGRESS',
-    messages: [
-      {
-        senderRole: 'CUSTOMER',
-        senderId: 'cust_001',
-        senderName: 'Kavinda Perera',
-        text: 'Hi support, my order ORD-9842 was scheduled for delivery 2 hours ago via Uber logistics, but driver location shows stuck in Rajagiriya. Can you check?',
-        timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
-      },
-      {
-        senderRole: 'ADMIN',
-        senderId: 'admin_01',
-        senderName: 'EcoHarvest Admin',
-        text: 'Hello Kavinda, we reached out to the Uber Direct dispatch fleet. The driver was delayed due to heavy rain on Baseline Road and is now en route. Expected arrival is within 25 minutes.',
-        timestamp: new Date(Date.now() - 3600000 * 1).toISOString(),
-      },
-    ],
-    resolutionNotes: 'Logistics dispatched driver with priority weather override.',
-    createdAt: new Date(Date.now() - 3600000 * 3).toISOString(),
-    updatedAt: new Date(Date.now() - 3600000 * 1).toISOString(),
-  },
-  {
-    ticketId: 'HD-8022',
-    userId: 'farmer_demo_1',
-    userName: 'Sunil Rathnayake',
-    userRole: 'FARMER',
-    userPhone: '+94 71 888 9999',
-    category: 'SLSI_VERIFICATION',
-    subject: 'SLS 1324 Organic Certificate Re-Audit Submission',
-    priority: 'MEDIUM',
-    status: 'OPEN',
-    messages: [
-      {
-        senderRole: 'FARMER',
-        senderId: 'farmer_demo_1',
-        senderName: 'Sunil Rathnayake (Green Valley Farm)',
-        text: 'Good day admin, I have re-uploaded our updated SLSI annual soil test report SLS 1324:2018 for Nuwara Eliya acreage. Please verify so our commission stays at 2.5%.',
-        timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
-      },
-    ],
-    createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-    updatedAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-  },
-  {
-    ticketId: 'HD-8019',
-    userId: 'cust_002',
-    userName: 'Amara Fernando',
-    userRole: 'CUSTOMER',
-    userPhone: '+94 72 345 6789',
-    orderId: 'ORD-9701',
-    category: 'PAYMENT_ESCROW',
-    subject: 'Stripe Escrow Release Confirmation',
-    priority: 'LOW',
-    status: 'RESOLVED',
-    messages: [
-      {
-        senderRole: 'CUSTOMER',
-        senderId: 'cust_002',
-        senderName: 'Amara Fernando',
-        text: 'The fresh passion fruits arrived in pristine condition. I confirmed delivery in the app. Did the farmer receive the payout?',
-        timestamp: new Date(Date.now() - 86400000 * 2).toISOString(),
-      },
-      {
-        senderRole: 'ADMIN',
-        senderId: 'admin_01',
-        senderName: 'EcoHarvest Admin',
-        text: 'Hi Amara! Yes, Stripe payment intent pi_mock_9701 was successfully released from escrow to the farmer bank account. Thank you for supporting organic agriculture!',
-        timestamp: new Date(Date.now() - 86400000 * 2 + 1800000).toISOString(),
-      },
-    ],
-    resolutionNotes: 'Escrow payment verified released on delivery confirmation.',
-    resolvedAt: new Date(Date.now() - 86400000 * 2 + 1800000).toISOString(),
-    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 2 + 1800000).toISOString(),
-  },
-];
-
 export async function getAllHelpTickets(): Promise<HelpTicket[]> {
   try {
     // Attempt to fetch from backend API first
     const res = await helpDeskApi.getAdminTickets();
-    if (res && res.data && res.data.length > 0) {
+    if (res && res.data) {
       await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(res.data));
       notifyHelpTicketListeners(res.data);
       return res.data;
@@ -3095,25 +3007,26 @@ export async function getAllHelpTickets(): Promise<HelpTicket[]> {
     if (raw) {
       return JSON.parse(raw) as HelpTicket[];
     }
-    await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(DEMO_HELP_TICKETS));
-    notifyHelpTicketListeners(DEMO_HELP_TICKETS);
-    return DEMO_HELP_TICKETS;
+    return [];
   } catch {
-    return DEMO_HELP_TICKETS;
+    return [];
   }
 }
 
 export async function getUserHelpTickets(userId?: string, role?: 'CUSTOMER' | 'FARMER'): Promise<HelpTicket[]> {
   const all = await getAllHelpTickets();
-  if (!userId) {
-    return role ? all.filter((t) => t.userRole === role) : all;
+  if (userId) {
+    return all.filter((t) => t.userId === userId);
   }
-  const userTickets = all.filter((t) => t.userId === userId || (!t.userId && t.userRole === role));
-  // If specific user has no tickets yet, return demo tickets matching their role so the UI is active
-  if (userTickets.length === 0 && role) {
+  if (role) {
     return all.filter((t) => t.userRole === role);
   }
-  return userTickets.length > 0 ? userTickets : all;
+  return all;
+}
+
+export async function clearHelpTickets(): Promise<void> {
+  await AsyncStorage.removeItem(HELP_TICKETS_STORAGE_KEY);
+  notifyHelpTicketListeners([]);
 }
 
 export async function createHelpTicketLocal(payload: {

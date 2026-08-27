@@ -95,11 +95,13 @@ export default function HelpDeskModal({
 
   // User identity
   const [userRole, setUserRole] = useState<'CUSTOMER' | 'FARMER'>('CUSTOMER');
-  const [userId, setUserId] = useState<string>('cust_001');
-  const [userName, setUserName] = useState<string>('EcoHarvest User');
+  const [userId, setUserId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
   const [userPhone, setUserPhone] = useState<string>('');
 
   // Form State
+  const [ticketAuthorName, setTicketAuthorName] = useState('');
+  const [ticketAuthorPhone, setTicketAuthorPhone] = useState('');
   const [category, setCategory] = useState<HelpTicketCategory>(initialCategory);
   const [subject, setSubject] = useState('');
   const [orderId, setOrderId] = useState(initialOrderId);
@@ -119,17 +121,30 @@ export default function HelpDeskModal({
       setUserRole('FARMER');
       const fProf = await getFarmerProfile();
       if (fProf) {
-        setUserId(fProf.id || 'farmer_demo_1');
-        setUserName(fProf.farmName || fProf.legalName || 'Farmer Partner');
+        setUserId(fProf.id || '');
+        const name = fProf.farmName || fProf.legalName || '';
+        setUserName(name);
         setUserPhone(fProf.mobileNumber || '');
+        setTicketAuthorName(name);
+        setTicketAuthorPhone(fProf.mobileNumber || '');
+      } else {
+        setUserId('');
+        setUserName('');
+        setUserPhone('');
       }
     } else {
       setUserRole('CUSTOMER');
       const cProf = await getUserProfile();
       if (cProf) {
-        setUserId(cProf.id || 'cust_001');
-        setUserName(cProf.fullName || 'Customer');
+        setUserId(cProf.id || '');
+        setUserName(cProf.fullName || '');
         setUserPhone(cProf.phoneNumber || '');
+        setTicketAuthorName(cProf.fullName || '');
+        setTicketAuthorPhone(cProf.phoneNumber || '');
+      } else {
+        setUserId('');
+        setUserName('');
+        setUserPhone('');
       }
     }
   }, []);
@@ -137,7 +152,7 @@ export default function HelpDeskModal({
   const loadTickets = useCallback(async () => {
     setIsLoading(true);
     try {
-      const list = await getUserHelpTickets(userId, userRole);
+      const list = await getUserHelpTickets(userId || undefined, userRole);
       setTickets(list);
     } catch (err) {
       console.warn('Error loading help tickets:', err);
@@ -163,6 +178,11 @@ export default function HelpDeskModal({
   };
 
   const handleSubmitTicket = async () => {
+    const finalName = (ticketAuthorName || userName).trim();
+    if (!finalName) {
+      Alert.alert('Your Name Required', 'Please enter your name so support can assist you.');
+      return;
+    }
     if (!subject.trim()) {
       Alert.alert('Subject Required', 'Please enter a short subject for your issue.');
       return;
@@ -174,11 +194,12 @@ export default function HelpDeskModal({
 
     setIsSubmitting(true);
     try {
+      const effectiveUserId = userId || `guest_${Date.now()}`;
       const created = await createHelpTicketLocal({
-        userId: userId || `user_${Date.now()}`,
-        userName: userName || (userRole === 'FARMER' ? 'Farmer' : 'Customer'),
+        userId: effectiveUserId,
+        userName: finalName,
         userRole,
-        userPhone,
+        userPhone: ticketAuthorPhone || userPhone,
         orderId: orderId.trim(),
         category,
         subject: subject.trim(),
@@ -206,8 +227,8 @@ export default function HelpDeskModal({
     try {
       const updated = await sendHelpTicketReply(selectedTicket.ticketId, {
         senderRole: userRole,
-        senderId: userId,
-        senderName: userName,
+        senderId: userId || selectedTicket.userId || '',
+        senderName: ticketAuthorName || userName || selectedTicket.userName || 'User',
         text: replyText.trim(),
       });
       setReplyText('');
@@ -576,6 +597,28 @@ export default function HelpDeskModal({
                   <Text style={styles.formSectionSub}>
                     Our admin governance and operations desk will review and reply directly to your issue.
                   </Text>
+
+                  {/* Name Input */}
+                  <Text style={styles.inputLabel}>Your Name *</Text>
+                  <TextInput
+                    style={styles.inputField}
+                    placeholder="Enter your name"
+                    placeholderTextColor="#9CA3AF"
+                    value={ticketAuthorName}
+                    onChangeText={setTicketAuthorName}
+                  />
+
+                  {/* Contact Number */}
+                  <Text style={styles.inputLabel}>Contact Number (Optional)</Text>
+                  <TextInput
+                    style={styles.inputField}
+                    placeholder="07X XXXXXXX"
+                    placeholderTextColor="#9CA3AF"
+                    keyboardType="phone-pad"
+                    value={ticketAuthorPhone}
+                    onChangeText={setTicketAuthorPhone}
+                    maxLength={15}
+                  />
 
                   {/* Category Picker */}
                   <Text style={styles.inputLabel}>Issue Category</Text>
