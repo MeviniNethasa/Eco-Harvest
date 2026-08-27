@@ -177,6 +177,7 @@ export interface FarmGroup {
   distanceKm: number;
   items: CartItem[];
   subtotal: number;
+  farmerId?: string;
 }
 
 /**
@@ -511,6 +512,7 @@ export interface AppNotification {
   role: NotificationRole;
   title: string;
   message: string;
+  body?: string;
   category: NotificationCategory;
   isRead: boolean;
   timestamp: string; // ISO timestamp

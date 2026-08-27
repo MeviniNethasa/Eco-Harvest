@@ -9,14 +9,18 @@ router.get('/:userId', async (req, res) => {
     const userId = req.params.userId;
     const { role } = req.query;
 
-    const filter = {
-      $or: [{ recipientId: userId }, { role: 'ALL' }],
-    };
+    const conditions = [
+      { recipientId: userId },
+      { recipientId: 'ALL' },
+      { role: 'ALL' },
+    ];
     if (role) {
-      filter.$or.push({ role });
+      conditions.push({ role });
+      if (role === 'FARMER') conditions.push({ recipientId: 'ALL_FARMERS' });
+      if (role === 'CUSTOMER') conditions.push({ recipientId: 'ALL_CUSTOMERS' });
     }
 
-    const notifications = await Notification.find(filter).sort({ createdAt: -1 });
+    const notifications = await Notification.find({ $or: conditions }).sort({ createdAt: -1 });
     const unreadCount = notifications.filter((n) => !n.isRead && !n.readStatus).length;
 
     return res.status(200).json({

@@ -31,20 +31,36 @@ const STATUS_COLOR: Record<Order['status'], string> = {
 };
 
 export default function FarmerOrdersScreen() {
+  const [farmerProfile, setFarmerProfile] = useState<any>(null);
   const [farmerId, setFarmerId] = useState<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     const profile = await getFarmerProfile();
+    setFarmerProfile(profile);
     setFarmerId(profile?.id ?? null);
-    setOrders(profile?.id ? await getOrdersByFarmerId(profile.id) : []);
+    if (profile?.id) {
+      const liveOrders = await getOrdersByFarmerId(profile.id);
+      setOrders(liveOrders);
+    } else {
+      setOrders([]);
+    }
     setLoading(false);
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       load();
+      // Real-time background sync every 3.5 seconds while viewing Incoming Orders
+      const interval = setInterval(() => {
+        getFarmerProfile().then((prof) => {
+          if (prof?.id) {
+            getOrdersByFarmerId(prof.id).then(setOrders);
+          }
+        });
+      }, 3500);
+      return () => clearInterval(interval);
     }, [load])
   );
 
@@ -56,10 +72,56 @@ export default function FarmerOrdersScreen() {
 
   // Only this farm's line items within an order, so "Total" reflects what
   // the farm is actually owed, not the customer's whole multi-farm cart.
-  const farmGroupFor = (order: Order): FarmGroup | undefined =>
-    order.farmGroups.find((group) =>
-      group.items.some((item) => item.farmerId === farmerId)
+  const farmGroupFor = (order: Order): FarmGroup | undefined => {
+    const cleanId = farmerId?.toLowerCase().trim();
+    const farmName = farmerProfile?.farmName?.toLowerCase().trim();
+
+    const matchedGroup = order.farmGroups?.find((group) => {
+      const gId = group.farmerId?.toLowerCase().trim();
+      const gName = group.farmName?.toLowerCase().trim();
+      return (
+        (cleanId && gId === cleanId) ||
+        (farmName && gName === farmName) ||
+        group.items?.some((item) => (cleanId && item.farmerId?.toLowerCase().trim() === cleanId) || (farmName && item.farmName?.toLowerCase().trim() === farmName))
+      );
+    });
+
+    if (matchedGroup) {
+      // Filter only this farm's items within the group if mixed
+      const relevantItems = matchedGroup.items?.filter(
+        (i) => (!cleanId || !i.farmerId || i.farmerId.toLowerCase().trim() === cleanId) ||
+               (farmName && i.farmName?.toLowerCase().trim() === farmName)
+      );
+      const itemsToUse = relevantItems && relevantItems.length > 0 ? relevantItems : matchedGroup.items;
+      const subtotal = itemsToUse.reduce((acc, it) => acc + (it.pricePerUnit * it.quantity), 0);
+      return {
+        ...matchedGroup,
+        items: itemsToUse,
+        subtotal: subtotal || matchedGroup.subtotal,
+      };
+    }
+
+    // Fallback if matching items directly from order.items
+    const matchedItems = order.items?.filter(
+      (item) => (cleanId && item.farmerId?.toLowerCase().trim() === cleanId) ||
+                (farmName && item.farmName?.toLowerCase().trim() === farmName)
     );
+
+    if (matchedItems && matchedItems.length > 0) {
+      const subtotal = matchedItems.reduce((acc, it) => acc + (it.pricePerUnit * it.quantity), 0);
+      return {
+        farmName: matchedItems[0]?.farmName || farmerProfile?.farmName || 'My Farm',
+        province: matchedItems[0]?.province || farmerProfile?.province || '',
+        district: matchedItems[0]?.district || farmerProfile?.district || '',
+        city: matchedItems[0]?.city || farmerProfile?.city || '',
+        distanceKm: 0,
+        items: matchedItems,
+        subtotal,
+      };
+    }
+
+    return order.farmGroups?.[0];
+  };
 
   return (
     <View style={styles.container}>

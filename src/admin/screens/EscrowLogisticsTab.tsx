@@ -47,9 +47,9 @@ export default function EscrowLogisticsTab() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const loadLedger = async () => {
+  const loadLedger = async (showLoading = true) => {
     try {
-      setIsLoading(true);
+      if (showLoading) setIsLoading(true);
       const res = await adminApi.getEscrowLedger();
       if (res && res.data) {
         setLedger(res.data);
@@ -60,12 +60,16 @@ export default function EscrowLogisticsTab() {
     } catch (err) {
       console.warn('Escrow ledger load notice:', err);
     } finally {
-      setIsLoading(false);
+      if (showLoading) setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadLedger();
+    loadLedger(true);
+    const interval = setInterval(() => {
+      loadLedger(false);
+    }, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   const currentItem =

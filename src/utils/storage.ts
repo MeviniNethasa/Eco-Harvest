@@ -37,7 +37,7 @@ import {
   BulkChatMessage,
 } from '../types';
 import { MOCK_CROPS, MOCK_FARMERS } from '../data/mockData';
-import { aiApi, farmerApi, helpDeskApi, messageApi, orderApi, productApi, stripeApi } from '../services/api';
+import { aiApi, farmerApi, helpDeskApi, messageApi, notificationApi, orderApi, productApi, stripeApi } from '../services/api';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const HELP_TICKETS_STORAGE_KEY = '@ecoharvest/help-tickets';
@@ -1583,16 +1583,129 @@ export function subscribeToOrders(listener: OrderListener): () => void {
 }
 
 /**
- * Retrieve all past orders from AsyncStorage, most recent first.
+ * Helper to convert backend Order MongoDB model into frontend Order interface.
+ */
+function mapBackendOrderToLocal(bo: any): Order {
+  const id = bo.orderId || (bo._id ? bo._id.toString() : generateOrderId());
+  const items: CartItem[] = (bo.items || []).map((it: any) => ({
+    cropId: it.cropId || '',
+    name: it.name || 'Organic Crop',
+    pricePerUnit: it.pricePerUnit || 0,
+    unit: it.unit || '1kg',
+    quantity: it.quantity || 1,
+    imageUrl: it.imageUrl || '',
+    farmName: it.farmName || '',
+    province: it.province || '',
+    district: it.district || '',
+    city: it.city || '',
+    farmerId: it.farmerId || bo.farmerId || '',
+  }));
+
+  const farmGroups: FarmGroup[] =
+    bo.farmGroups && bo.farmGroups.length > 0
+      ? bo.farmGroups.map((g: any) => ({
+          farmName: g.farmName || '',
+          province: g.province || '',
+          district: g.district || '',
+          city: g.city || '',
+          distanceKm: g.distanceKm || 0,
+          farmerId: g.farmerId || '',
+          subtotal:
+            g.subtotal ||
+            (g.items || []).reduce(
+              (acc: number, it: any) => acc + (it.pricePerUnit || 0) * (it.quantity || 1),
+              0
+            ),
+          items: (g.items || []).map((it: any) => ({
+            cropId: it.cropId || '',
+            name: it.name || '',
+            pricePerUnit: it.pricePerUnit || 0,
+            unit: it.unit || '1kg',
+            quantity: it.quantity || 1,
+            imageUrl: it.imageUrl || '',
+            farmName: it.farmName || g.farmName || '',
+            province: it.province || '',
+            district: it.district || '',
+            city: it.city || '',
+            farmerId: it.farmerId || g.farmerId || bo.farmerId || '',
+          })),
+        }))
+      : groupCartByFarm(items);
+
+  const rawTotal = bo.totalAmount || bo.total || 0;
+  const summary: OrderSummary = {
+    itemsSubtotal: rawTotal,
+    deliveryFee: 0,
+    deliveryFeeLabel: 'Free',
+    wholesaleDiscount: 0,
+    wholesaleDiscountPercent: 0,
+    grandTotal: rawTotal,
+  };
+
+  let status: OrderStatus = 'placed';
+  const s = (bo.status || '').toLowerCase();
+  if (s === 'confirmed') status = 'confirmed';
+  else if (s === 'in_transit') status = 'in_transit';
+  else if (s === 'delivered' || s === 'completed') status = 'delivered';
+  else if (s === 'cancelled') status = 'cancelled';
+
+  return {
+    id,
+    items,
+    farmGroups,
+    summary,
+    payment: {
+      cardBrand: bo.paymentMethod || 'Visa (Test)',
+      cardLast4: '4242',
+      expiry: '12/28',
+      postalCode: bo.deliveryAddress?.postalCode || '10100',
+    },
+    status,
+    createdAt: bo.createdAt || new Date().toISOString(),
+    isReviewed: bo.isReviewed || bo.reviewRating !== undefined,
+  };
+}
+
+/**
+ * Retrieve all past orders from backend API merged with AsyncStorage, most recent first.
  */
 export async function getOrders(): Promise<Order[]> {
+  let localOrders: Order[] = [];
   try {
     const raw = await AsyncStorage.getItem(ORDERS_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Order[]) : [];
+    localOrders = raw ? (JSON.parse(raw) as Order[]) : [];
   } catch (error) {
-    console.error('Failed to read orders from storage:', error);
-    return [];
+    console.error('Failed to read orders from local storage:', error);
   }
+
+  try {
+    const res = await orderApi.getAll();
+    if (res && res.data && Array.isArray(res.data)) {
+      const backendOrders = res.data.map(mapBackendOrderToLocal);
+      const mergedMap = new Map<string, Order>();
+
+      // Put backend orders in first
+      backendOrders.forEach((o) => mergedMap.set(o.id, o));
+      // Add any locally pending orders that haven't synced
+      localOrders.forEach((o) => {
+        if (!mergedMap.has(o.id)) {
+          mergedMap.set(o.id, o);
+        }
+      });
+
+      const merged = Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+
+      // Cache to AsyncStorage silently
+      await AsyncStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(merged));
+      return merged;
+    }
+  } catch (apiErr) {
+    // Graceful fallback to local cache
+  }
+
+  return localOrders;
 }
 
 /**
@@ -1616,21 +1729,45 @@ export async function getOrderById(orderId: string): Promise<Order | null> {
 /**
  * Every order containing at least one line item sold by a given farm — the
  * Farmer Mode Orders tab's "incoming customer orders for this farm" list
- * (FarmerOrdersScreen), as opposed to `getOrders()`'s full on-device order
- * history, which is scoped to the current *customer's* purchases.
- *
- * Matches on `CartItem.farmerId` (denormalized onto each item at
- * `addToCart` time — see `types/index.ts`), not `FarmGroup.farmName`, so a
- * farm that renames itself after an order was placed still matches by its
- * stable id. Orders whose items have no `farmerId` at all (e.g. sandbox/
- * demo crops predating the Farmer-First model) never match any farm and are
- * simply excluded, same convention as `getReviewsByFarmerId`. Newest first,
- * same ordering as `getOrders()`.
+ * (FarmerOrdersScreen). Matches by farmerId, farmName, items.farmerId, or farmGroups.
  */
 export async function getOrdersByFarmerId(farmerId: string): Promise<Order[]> {
-  const orders = await getOrders();
-  return orders.filter((order) =>
-    order.items.some((item) => item.farmerId === farmerId)
+  const profile = await getFarmerProfile();
+  const farmName = profile?.farmName?.toLowerCase().trim();
+  const cleanId = farmerId?.toLowerCase().trim();
+
+  // Try fetching directly from backend farmer endpoint
+  let backendFarmerOrders: Order[] = [];
+  try {
+    const res = await orderApi.getByFarmer(farmerId);
+    if (res && res.data && Array.isArray(res.data)) {
+      backendFarmerOrders = res.data.map(mapBackendOrderToLocal);
+    }
+  } catch (err) {
+    // Fallback
+  }
+
+  const allOrders = await getOrders();
+  const combinedMap = new Map<string, Order>();
+
+  backendFarmerOrders.forEach((o) => combinedMap.set(o.id, o));
+  allOrders.forEach((order) => {
+    const matchesFarmerId =
+      order.items?.some((it) => it.farmerId?.toLowerCase().trim() === cleanId) ||
+      order.farmGroups?.some((fg) => fg.farmerId?.toLowerCase().trim() === cleanId || fg.items?.some((it) => it.farmerId?.toLowerCase().trim() === cleanId));
+
+    const matchesFarmName =
+      farmName &&
+      (order.farmGroups?.some((fg) => fg.farmName?.toLowerCase().trim() === farmName) ||
+        order.items?.some((it) => it.farmName?.toLowerCase().trim() === farmName));
+
+    if (matchesFarmerId || matchesFarmName) {
+      combinedMap.set(order.id, order);
+    }
+  });
+
+  return Array.from(combinedMap.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 }
 
@@ -1639,10 +1776,6 @@ export async function getOrdersByFarmerId(farmerId: string): Promise<Order[]> {
  * Stripe ]" button: snapshots the current cart into an Order, persists it,
  * clears the cart, and returns the new order so the caller can navigate
  * into Screen M-04 with its id.
- *
- * Throws if the cart is empty or if persisting fails — callers should
- * catch this and keep the user on the checkout screen rather than
- * navigating forward on a failed/empty order.
  */
 export async function createOrder(payment: PaymentDetails): Promise<Order> {
   const cart = await getCart();
@@ -1664,14 +1797,34 @@ export async function createOrder(payment: PaymentDetails): Promise<Order> {
   };
 
   const existingOrders = await getOrders();
-  const updatedOrders = [order, ...existingOrders];
+  const updatedOrders = [order, ...existingOrders.filter((o) => o.id !== order.id)];
 
   await saveOrders(updatedOrders);
   await clearCart();
 
-  // Persist to backend MongoDB Express API for Admin Escrow tracking.
-  // Awaited so failures are logged visibly (graceful degradation — the local
-  // order is still returned even if the backend is unreachable).
+  // Create immediate local notifications so Drawer & Badge update in real-time
+  try {
+    await addNotification({
+      role: 'CUSTOMER',
+      category: 'ORDER',
+      title: `🎉 Order Placed: #${order.id}`,
+      message: `Your payment of LKR ${summary.grandTotal.toLocaleString()} is locked in Escrow. Driver dispatch initiated.`,
+      body: `Your payment of LKR ${summary.grandTotal.toLocaleString()} is locked in Escrow. Driver dispatch initiated.`,
+    });
+
+    const farmerSummary = cart.map((i) => `${i.quantity}x ${i.name}`).join(', ');
+    await addNotification({
+      role: 'FARMER',
+      category: 'ORDER',
+      title: `📦 New Order Received: #${order.id}`,
+      message: `New order for ${farmerSummary} (Total: LKR ${summary.grandTotal.toLocaleString()}). Payment locked in Escrow.`,
+      body: `New order for ${farmerSummary} (Total: LKR ${summary.grandTotal.toLocaleString()}). Payment locked in Escrow.`,
+    });
+  } catch (notifErr) {
+    console.warn('Local notification creation notice:', notifErr);
+  }
+
+  // Persist to backend MongoDB Express API for Admin Escrow tracking & Farmer sync
   try {
     const userProfile = await getUserProfile();
     const customerId = userProfile?.id || userProfile?.phoneNumber || 'cust_anonymous';
@@ -3077,26 +3230,64 @@ export function subscribeToNotifications(listener: NotificationListener): () => 
 }
 
 /**
- * Retrieve every persisted notification (both channels), lazily seeding
- * `INITIAL_NOTIFICATIONS` into AsyncStorage on first-ever access so the
- * Notification Drawer never opens empty on a fresh install. Never throws —
- * falls back to `[]` on a storage read failure.
+ * Retrieve every persisted notification (both channels), synchronizing with
+ * MongoDB backend API and falling back to AsyncStorage.
  */
 async function getAllNotifications(): Promise<AppNotification[]> {
+  let localList: AppNotification[] = [];
   try {
     const raw = await AsyncStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
     if (raw) {
-      return JSON.parse(raw) as AppNotification[];
+      localList = JSON.parse(raw) as AppNotification[];
+    } else {
+      localList = INITIAL_NOTIFICATIONS;
+      await AsyncStorage.setItem(
+        NOTIFICATIONS_STORAGE_KEY,
+        JSON.stringify(INITIAL_NOTIFICATIONS)
+      );
     }
-    await AsyncStorage.setItem(
-      NOTIFICATIONS_STORAGE_KEY,
-      JSON.stringify(INITIAL_NOTIFICATIONS)
-    );
-    return INITIAL_NOTIFICATIONS;
   } catch (error) {
     console.error('Failed to read notifications from storage:', error);
-    return [];
   }
+
+  // Sync from backend API
+  try {
+    const farmer = await getFarmerProfile();
+    const customer = await getUserProfile();
+    const lookupId = farmer?.id || customer?.id || customer?.phoneNumber || 'all';
+
+    const res = await notificationApi.getNotifications(lookupId);
+    if (res && res.data && Array.isArray(res.data)) {
+      const backendNotifs: AppNotification[] = res.data.map((bn: any) => ({
+        id: bn._id ? bn._id.toString() : bn.id || generateNotificationId(),
+        role: bn.role === 'FARMER' ? 'FARMER' : 'CUSTOMER',
+        category: (['ORDER', 'DISPATCH', 'RECOMMENDATION', 'INVENTORY', 'REVIEW', 'BULK_MATCH'].includes(bn.type) ? bn.type : 'RECOMMENDATION') as any,
+        title: bn.title || 'Notification',
+        message: bn.message || bn.body || bn.title || '',
+        body: bn.body || bn.message || '',
+        timestamp: bn.createdAt || bn.timestamp || new Date().toISOString(),
+        isRead: bn.isRead ?? bn.readStatus ?? false,
+      }));
+
+      const mergedMap = new Map<string, AppNotification>();
+      backendNotifs.forEach((n) => mergedMap.set(n.id, n));
+      localList.forEach((n) => {
+        if (!mergedMap.has(n.id)) {
+          mergedMap.set(n.id, n);
+        }
+      });
+
+      const merged = Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+      await AsyncStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(merged));
+      return merged;
+    }
+  } catch (backendErr) {
+    // Offline fallback
+  }
+
+  return localList;
 }
 
 /**

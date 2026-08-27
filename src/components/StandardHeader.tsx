@@ -37,7 +37,13 @@ export default function StandardHeader({
       const unsub = subscribeToNotifications(() => {
         getUnreadNotificationCount('FARMER').then(setUnreadCount);
       });
-      return unsub;
+      const interval = setInterval(() => {
+        getUnreadNotificationCount('FARMER').then(setUnreadCount);
+      }, 4000);
+      return () => {
+        unsub();
+        clearInterval(interval);
+      };
     }
   }, [showNotificationBell]);
 

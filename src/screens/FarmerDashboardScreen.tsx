@@ -119,6 +119,20 @@ export default function FarmerDashboardScreen() {
   useFocusEffect(
     useCallback(() => {
       loadData();
+      const interval = setInterval(() => {
+        getFarmerProfile().then((f) => {
+          if (f?.id) {
+            Promise.all([
+              getProductsByFarmerId(f.id),
+              getOrdersByFarmerId(f.id),
+            ]).then(([prods, ords]) => {
+              setProducts(prods);
+              setOrders(ords);
+            });
+          }
+        });
+      }, 4000);
+      return () => clearInterval(interval);
     }, [loadData])
   );
 
@@ -153,7 +167,12 @@ export default function FarmerDashboardScreen() {
     const soldPerProduct: Record<string, { name: string; qty: number; revenue: number; image?: string }> = {};
 
     orders.forEach((order) => {
-      const farmerItems = order.items.filter((it) => it.farmerId === profile?.id);
+      const cleanId = profile?.id?.toLowerCase().trim();
+      const farmName = profile?.farmName?.toLowerCase().trim();
+      const farmerItems = order.items.filter(
+        (it) => (cleanId && it.farmerId?.toLowerCase().trim() === cleanId) ||
+                (farmName && it.farmName?.toLowerCase().trim() === farmName)
+      );
       if (farmerItems.length > 0) {
         orderCount += 1;
       }

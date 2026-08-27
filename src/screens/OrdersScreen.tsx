@@ -230,10 +230,14 @@ export default function OrdersScreen() {
     setNotificationsVisible(false);
   }, []);
 
-  // Catch up whenever the Orders tab regains focus.
+  // Catch up whenever the Orders tab regains focus and keep live via interval.
   useFocusEffect(
     useCallback(() => {
       refreshOrders();
+      const interval = setInterval(() => {
+        getOrders().then(setOrders);
+      }, 4000);
+      return () => clearInterval(interval);
     }, [refreshOrders])
   );
 

@@ -54,9 +54,9 @@ export default function EcosystemAnalyticsTab() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadAnalytics = async () => {
+  const loadAnalytics = async (showLoading = true) => {
     try {
-      setIsLoading(true);
+      if (showLoading) setIsLoading(true);
       const res = await adminApi.getAnalyticsHealth();
       if (res && res.data) {
         setData(res.data);
@@ -64,12 +64,16 @@ export default function EcosystemAnalyticsTab() {
     } catch (err) {
       console.warn('Admin analytics load notice:', err);
     } finally {
-      setIsLoading(false);
+      if (showLoading) setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadAnalytics();
+    loadAnalytics(true);
+    const interval = setInterval(() => {
+      loadAnalytics(false);
+    }, 4000);
+    return () => clearInterval(interval);
   }, []);
 
   if (isLoading || !data) {
