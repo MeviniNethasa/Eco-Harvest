@@ -170,4 +170,45 @@ router.post('/profile', async (req, res) => {
   }
 });
 
+// DELETE /api/farmers/:id (Delete a farm profile and its products)
+router.delete('/:id', async (req, res) => {
+  try {
+    const mongoose = require('mongoose');
+    const { id } = req.params;
+    const Product = require('../models/Product');
+    let farmer = null;
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      farmer = await FarmerProfile.findById(id);
+    }
+    if (!farmer) {
+      farmer = await FarmerProfile.findOne({
+        $or: [
+          { farmerId: id },
+          { farmName: { $regex: `^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } },
+        ],
+      });
+    }
+    if (!farmer) {
+      return res.status(404).json({ success: false, message: 'Farmer profile not found' });
+    }
+
+    const farmId = farmer._id.toString();
+    const fId = farmer.farmerId;
+    const farmName = farmer.farmName;
+
+    await FarmerProfile.findByIdAndDelete(farmer._id);
+    await Product.deleteMany({
+      $or: [
+        { farmerId: farmId },
+        ...(fId ? [{ farmerId: fId }] : []),
+        ...(farmName ? [{ farmName }] : []),
+      ],
+    });
+
+    return res.status(200).json({ success: true, message: 'Farmer and products deleted successfully' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 module.exports = router;

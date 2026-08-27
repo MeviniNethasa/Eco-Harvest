@@ -280,6 +280,11 @@ export const farmerApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  delete: (id: string) =>
+    request<{ success: boolean; message: string }>(`/farmers/${id}`, {
+      method: 'DELETE',
+    }),
 };
 
 // ---------------------------------------------------------------------------

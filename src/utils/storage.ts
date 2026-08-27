@@ -55,6 +55,8 @@ const NOTIFICATIONS_STORAGE_KEY = '@ecoharvest/notifications';
 const VERIFICATION_REQUESTS_STORAGE_KEY = '@ecoharvest/verification-requests';
 const ACTIVE_MODE_STORAGE_KEY = '@ecoharvest/active-mode';
 
+const DELETED_TEST_FARMS = new Set(['cm', 'helow', 'cm farms', 'cm farm', 'see']);
+
 /**
  * Simple pub/sub (same pattern as the crop listeners further down) so the
  * bottom tab bar badge can update immediately whenever the cart changes,
@@ -262,7 +264,12 @@ export function subscribeToCrops(listener: CropListener): () => void {
 export async function getCrops(): Promise<Crop[]> {
   try {
     const raw = await AsyncStorage.getItem(CROPS_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Crop[]) : [];
+    const parsed = raw ? (JSON.parse(raw) as Crop[]) : [];
+    return parsed.filter(
+      (c) =>
+        !c.farmName ||
+        !DELETED_TEST_FARMS.has(c.farmName.trim().toLowerCase())
+    );
   } catch (error) {
     console.error('Failed to read crops from storage:', error);
     return [];
@@ -679,14 +686,19 @@ export async function getFarmers(): Promise<FarmerProfile[]> {
   try {
     const rawRegistered = await AsyncStorage.getItem(REGISTERED_FARMERS_STORAGE_KEY);
     if (rawRegistered) {
-      registered = JSON.parse(rawRegistered) as FarmerProfile[];
+      registered = (JSON.parse(rawRegistered) as FarmerProfile[]).filter(
+        (f) => !DELETED_TEST_FARMS.has(f.farmName?.trim().toLowerCase())
+      );
     }
   } catch (err) {
     console.error('Failed to read registered farmers from storage:', err);
   }
 
   const onDeviceProfile = await getFarmerProfile();
-  if (onDeviceProfile) {
+  if (
+    onDeviceProfile &&
+    !DELETED_TEST_FARMS.has(onDeviceProfile.farmName?.trim().toLowerCase())
+  ) {
     const exists = registered.some(
       (f) =>
         f.id === onDeviceProfile.id ||
@@ -708,7 +720,10 @@ export async function getFarmers(): Promise<FarmerProfile[]> {
   const registeredIds = new Set(registered.map((f) => f.id));
   const registeredNames = new Set(registered.map((f) => f.farmName?.trim().toLowerCase()));
   const mockToAdd = MOCK_FARMERS.filter(
-    (mf) => !registeredIds.has(mf.id) && !registeredNames.has(mf.farmName?.trim().toLowerCase())
+    (mf) =>
+      !DELETED_TEST_FARMS.has(mf.farmName?.trim().toLowerCase()) &&
+      !registeredIds.has(mf.id) &&
+      !registeredNames.has(mf.farmName?.trim().toLowerCase())
   );
   const merged = [...registered, ...mockToAdd];
 
@@ -716,61 +731,64 @@ export async function getFarmers(): Promise<FarmerProfile[]> {
   farmerApi
     .getAll()
     .then(async (res) => {
-      if (res && res.success && Array.isArray(res.data) && res.data.length > 0) {
-        const backendFarms: FarmerProfile[] = res.data.map((bf: any) => ({
-          id: bf.farmerId || bf._id?.toString() || bf.id || generateFarmerId(),
-          legalName: bf.ownerName || bf.legalName || 'Farm Owner',
-          farmName: bf.farmName || 'EcoHarvest Farm',
-          mobileNumber: bf.mobileNumber || '',
-          province: bf.province || bf.location?.province || '',
-          district: bf.district || bf.location?.district || '',
-          city: bf.city || bf.location?.city || '',
-          description: bf.description || '',
-          slsiCertificateUri: bf.slsiCertificateUrl || null,
-          verificationStatus:
-            bf.slsiStatus === 'VERIFIED' || bf.isSLSIVerified
-              ? 'VERIFIED'
-              : bf.slsiStatus === 'REJECTED'
-              ? 'REJECTED'
-              : 'PENDING_VERIFICATION',
-          isSLSIVerified: bf.isSLSIVerified || bf.slsiStatus === 'VERIFIED',
-          commissionRate: bf.commissionRate || 5.0,
-          farmCoverPhotoUrl: bf.farmCoverPhotoUrl || undefined,
-          bankDetails: bf.bankDetails || {
-            bankName: '',
-            branchCode: '',
-            accountNumber: '',
-            accountHolderName: '',
-          },
-        }));
+      if (res && res.success && Array.isArray(res.data)) {
+        const backendFarms: FarmerProfile[] = res.data
+          .filter((bf: any) => !DELETED_TEST_FARMS.has(bf.farmName?.trim().toLowerCase()))
+          .map((bf: any) => ({
+            id: bf.farmerId || bf._id?.toString() || bf.id || generateFarmerId(),
+            legalName: bf.ownerName || bf.legalName || 'Farm Owner',
+            farmName: bf.farmName || 'EcoHarvest Farm',
+            mobileNumber: bf.mobileNumber || '',
+            province: bf.province || bf.location?.province || '',
+            district: bf.district || bf.location?.district || '',
+            city: bf.city || bf.location?.city || '',
+            description: bf.description || '',
+            slsiCertificateUri: bf.slsiCertificateUrl || null,
+            verificationStatus:
+              bf.slsiStatus === 'VERIFIED' || bf.isSLSIVerified
+                ? 'VERIFIED'
+                : bf.slsiStatus === 'REJECTED'
+                ? 'REJECTED'
+                : 'PENDING_VERIFICATION',
+            isSLSIVerified: bf.isSLSIVerified || bf.slsiStatus === 'VERIFIED',
+            commissionRate: bf.commissionRate || 5.0,
+            farmCoverPhotoUrl: bf.farmCoverPhotoUrl || undefined,
+            bankDetails: bf.bankDetails || {
+              bankName: '',
+              branchCode: '',
+              accountNumber: '',
+              accountHolderName: '',
+            },
+          }));
 
         let currentRegistered: FarmerProfile[] = [];
         try {
           const raw = await AsyncStorage.getItem(REGISTERED_FARMERS_STORAGE_KEY);
-          if (raw) currentRegistered = JSON.parse(raw);
+          if (raw) {
+            currentRegistered = (JSON.parse(raw) as FarmerProfile[]).filter(
+              (f) => !DELETED_TEST_FARMS.has(f.farmName?.trim().toLowerCase())
+            );
+          }
         } catch (_) {}
 
-        let updated = [...currentRegistered];
-        let hasNew = false;
-        backendFarms.forEach((bf) => {
-          const idx = updated.findIndex(
-            (f) =>
-              f.id === bf.id ||
-              (f.farmName && f.farmName.trim().toLowerCase() === bf.farmName.trim().toLowerCase()) ||
-              (f.mobileNumber && bf.mobileNumber && f.mobileNumber.trim() === bf.mobileNumber.trim())
+        // Keep valid backend farms + any pending local on-device profile
+        const updated = [...backendFarms];
+        if (
+          onDeviceProfile &&
+          !DELETED_TEST_FARMS.has(onDeviceProfile.farmName?.trim().toLowerCase())
+        ) {
+          const inBackend = updated.some(
+            (bf) =>
+              bf.id === onDeviceProfile.id ||
+              (bf.farmName && bf.farmName.trim().toLowerCase() === onDeviceProfile.farmName.trim().toLowerCase())
           );
-          if (idx >= 0) {
-            updated[idx] = { ...updated[idx], ...bf };
-          } else {
-            updated.push(bf);
-            hasNew = true;
+          if (!inBackend) {
+            updated.unshift(onDeviceProfile);
           }
-        });
+        }
 
         await AsyncStorage.setItem(REGISTERED_FARMERS_STORAGE_KEY, JSON.stringify(updated));
-        if (hasNew) {
-          notifyFarmerListeners(updated);
-        }
+        notifyFarmerListeners(updated);
       }
     })
     .catch(() => {
@@ -778,6 +796,33 @@ export async function getFarmers(): Promise<FarmerProfile[]> {
     });
 
   return merged;
+}
+
+/**
+ * Remove a farmer profile locally and from the backend database.
+ */
+export async function deleteFarmer(farmerIdOrName: string): Promise<void> {
+  const target = farmerIdOrName.trim().toLowerCase();
+  try {
+    const rawRegistered = await AsyncStorage.getItem(REGISTERED_FARMERS_STORAGE_KEY);
+    if (rawRegistered) {
+      const registered: FarmerProfile[] = JSON.parse(rawRegistered);
+      const filtered = registered.filter(
+        (f) =>
+          f.id.toLowerCase() !== target &&
+          f.farmName.trim().toLowerCase() !== target
+      );
+      await AsyncStorage.setItem(REGISTERED_FARMERS_STORAGE_KEY, JSON.stringify(filtered));
+      notifyFarmerListeners(filtered);
+    }
+  } catch (err) {
+    console.error('Failed to remove farmer locally:', err);
+  }
+
+  // Also remove from backend
+  try {
+    await farmerApi.delete(farmerIdOrName);
+  } catch (_) {}
 }
 
 /**
