@@ -35,6 +35,7 @@ import {
 } from '../utils/storage';
 import { authApi } from '../services/api';
 import HeaderBranding from '../components/HeaderBranding';
+import { showFeedback, showToast } from '../components/FeedbackPopup';
 
 // --- Design tokens (Section 1 & 2 of design.md) -----------------------------
 
@@ -482,13 +483,24 @@ export default function CartScreen() {
           setIsAuthModalVisible(false);
           setAuthFullName('');
           setAuthPassword('');
-          Alert.alert('Welcome Back!', `Signed in as ${user.fullName}. You can now proceed to pay.`);
+          showFeedback({
+            type: 'success',
+            title: 'Signed In Successfully!',
+            message: `Welcome back, ${user.fullName}! You can now complete your checkout.`,
+            buttonText: 'Proceed to Pay',
+          });
         } else {
           setAuthError(loginRes.message || 'Invalid full name or password.');
         }
       }
     } catch (err: any) {
       setAuthError(err.message || 'Authentication failed. Please try again.');
+      showFeedback({
+        type: 'error',
+        title: 'Sign In Failed',
+        message: err.message || 'Invalid full name or password.',
+        buttonText: 'Try Again',
+      });
     } finally {
       setIsAuthenticating(false);
     }
@@ -525,13 +537,21 @@ export default function CartScreen() {
       });
 
       setCart([]);
-      navigation.navigate('OrderTracking', { orderId: order.id });
-    } catch (error) {
+      showFeedback({
+        type: 'success',
+        title: 'Order Placed Successfully!',
+        message: `Your order #${order.id} has been placed. Payment is secured with Escrow and driver dispatch is initiated.`,
+        buttonText: 'Track Order',
+        onDismiss: () => navigation.navigate('OrderTracking', { orderId: order.id }),
+      });
+    } catch (error: any) {
       console.error('Failed to create order:', error);
-      Alert.alert(
-        'Payment failed',
-        'We could not process your test payment. Please try again.'
-      );
+      showFeedback({
+        type: 'error',
+        title: 'Payment / Order Failed',
+        message: error?.message || 'We could not process your checkout payment. Please try again.',
+        buttonText: 'Try Again',
+      });
     } finally {
       setSubmitting(false);
     }

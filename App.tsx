@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import TabNavigator from './src/navigation/TabNavigator';
 import SplashScreen from './src/screens/SplashScreen';
 import AdminPortalScreen from './src/admin/AdminPortalScreen';
+import FeedbackPopup from './src/components/FeedbackPopup';
 
 /**
  * Web-only helper: is the current browser URL under `/admin`?
@@ -71,18 +72,29 @@ export default function App() {
   // Admin Command Panel: bypasses the splash screen entirely and renders
   // immediately, regardless of splash state above.
   if (isAdminRoute) {
-    return <AdminPortalScreen />;
+    return (
+      <>
+        <AdminPortalScreen />
+        <FeedbackPopup />
+      </>
+    );
   }
 
   if (showSplash) {
     return (
       <Animated.View style={[styles.flexFill, { opacity: splashOpacity }]}>
         <SplashScreen onFinish={handleSplashFinish} />
+        <FeedbackPopup />
       </Animated.View>
     );
   }
 
-  return <TabNavigator />;
+  return (
+    <>
+      <TabNavigator />
+      <FeedbackPopup />
+    </>
+  );
 }
 
 const styles = StyleSheet.create({

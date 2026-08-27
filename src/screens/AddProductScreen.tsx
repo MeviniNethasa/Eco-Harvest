@@ -29,6 +29,7 @@ import { CropCategory, FarmerProfile, MyProductsStackParamList } from '../types'
 import { getFarmerProfile, publishCrop } from '../utils/storage';
 import { productApi } from '../services/api';
 import StandardHeader from '../components/StandardHeader';
+import { showFeedback } from '../components/FeedbackPopup';
 
 type NavProp = NativeStackNavigationProp<MyProductsStackParamList, 'AddProduct'>;
 
@@ -178,13 +179,21 @@ export default function AddProductScreen() {
       setForm(EMPTY_FORM);
       setSelectedImageUri(null);
 
-      Alert.alert('Published', `${form.name.trim()} is now live on the marketplace.`, [
-        { text: 'View My Products', onPress: () => navigation.navigate('MyProductsHome') },
-        { text: 'Add Another', style: 'cancel' },
-      ]);
-    } catch (error) {
+      showFeedback({
+        type: 'success',
+        title: 'Product Listed Successfully!',
+        message: `${form.name.trim()} is now live on the marketplace. Customers can now browse and purchase your harvest.`,
+        buttonText: 'View My Products',
+        onDismiss: () => navigation.navigate('MyProductsHome' as any),
+      });
+    } catch (error: any) {
       console.error('Failed to publish crop:', error);
-      Alert.alert('Publish failed', 'Something went wrong — please try again.');
+      showFeedback({
+        type: 'error',
+        title: 'Publish Failed',
+        message: error?.message || 'Could not publish your product. Please check your inputs and try again.',
+        buttonText: 'Try Again',
+      });
     } finally {
       setSubmitting(false);
     }

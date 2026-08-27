@@ -33,6 +33,7 @@ import {
   subscribeToChatMessages,
 } from '../utils/storage';
 import StandardHeader from '../components/StandardHeader';
+import { showBlockedMessageModal, showToast } from '../components/FeedbackPopup';
 
 const DEFAULT_USER_ROLE: ChatMessage['senderRole'] = 'CUSTOMER';
 
@@ -189,11 +190,10 @@ export default function ChatScreen() {
         // Run strict real-time moderation engine
         const modResult = await checkContentModeration(text, 'chat');
         if (!modResult.allowed) {
-          Alert.alert(
-            'Message Not Allowed',
+          showBlockedMessageModal(
             modResult.reason ||
-              'This message violates platform safety rules (e.g., contact numbers, emails, or offensive language). Please edit your message.',
-            [{ text: 'Edit Message', style: 'cancel' }]
+              'This message violates platform safety rules (e.g., contact numbers, emails, or offensive language).',
+            modResult.category
           );
           setIsSending(false);
           return;

@@ -50,6 +50,7 @@ import { Asset } from 'expo-asset';
 import { Order, ProductReview, ReviewQualityTag } from '../types';
 import { checkContentModeration, generateReviewId, saveReview } from '../utils/storage';
 import { aiApi, orderApi } from '../services/api';
+import { showBlockedMessageModal, showFeedback, showToast } from './FeedbackPopup';
 
 // A 1x1 neutral-gray PNG, used only when neither the camera nor the
 // gallery is available (see the module-level comment above). Good enough
@@ -479,11 +480,10 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
       if (trimmedComment) {
         const modResult = await checkContentModeration(trimmedComment, 'review');
         if (!modResult.allowed) {
-          Alert.alert(
-            'Review Not Allowed',
+          showBlockedMessageModal(
             modResult.reason ||
-              'Your review comment violates platform safety rules (such as phone numbers, emails, or offensive language). Please edit your comment.',
-            [{ text: 'Edit Review' }]
+              'Your review comment contains contact numbers, email addresses, or offensive language.',
+            modResult.category
           );
           setSubmitting(false);
           return;
@@ -526,9 +526,20 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
       onSubmitted?.(saved);
       resetState();
       onClose();
-    } catch (error) {
+      showFeedback({
+        type: 'success',
+        title: 'Review Published!',
+        message: 'Thank you for verifying and rating this produce delivery.',
+        buttonText: 'Awesome',
+      });
+    } catch (error: any) {
       console.error('Failed to submit review:', error);
-      Alert.alert('Submission failed', 'Could not submit your review. Please try again.');
+      showFeedback({
+        type: 'error',
+        title: 'Review Submission Failed',
+        message: error?.message || 'Could not submit your review. Please try again.',
+        buttonText: 'Close',
+      });
     } finally {
       setSubmitting(false);
     }

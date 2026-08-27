@@ -26,6 +26,7 @@ import StripeCheckoutModal from '../components/StripeCheckoutModal';
 import MapLocationPickerModal, { SelectedLocationData } from '../components/MapLocationPickerModal';
 import { authApi, stripeApi } from '../services/api';
 import { generateCustomerId, saveUserProfile, setActiveMode } from '../utils/storage';
+import { showFeedback } from '../components/FeedbackPopup';
 import type { CustomerProfile, SubscriptionPlan } from '../types';
 import type { ProfileStackParamList } from '../navigation/TabNavigator';
 
@@ -252,10 +253,12 @@ export default function RegisterCustomerScreen() {
           msg.includes('duplicate') ||
           apiErr?.errorType === 'DUPLICATE_PHONE'
         ) {
-          Alert.alert(
-            'Phone Number Registered',
-            'This phone number is already registered. Please use a different phone number or sign in.'
-          );
+          showFeedback({
+            type: 'error',
+            title: 'Phone Already Registered',
+            message: 'This mobile number is already registered. Please sign in to your existing account.',
+            buttonText: 'Sign In',
+          });
           setIsSubmitting(false);
           return;
         }
@@ -284,20 +287,27 @@ export default function RegisterCustomerScreen() {
         }
       };
 
-      Alert.alert(
-        'Sign Up Complete',
-        `Welcome to EcoHarvest, ${newProfile.fullName}! ${
-          bulkStatus ? 'Bulk Buyer Access is active.' : ''
+      showFeedback({
+        type: 'success',
+        title: 'Account Created Successfully!',
+        message: `Welcome to EcoHarvest, ${newProfile.fullName}! ${
+          bulkStatus ? 'Bulk Buyer Wholesale Access is now activated.' : 'Your account is ready.'
         }`,
-        [{ text: 'OK', onPress: finishNavigation }]
-      );
+        buttonText: 'Get Started',
+        onDismiss: finishNavigation,
+      });
 
       if (Platform.OS === 'web') {
         setTimeout(finishNavigation, 400);
       }
     } catch (err: any) {
       console.error('Sign up failed:', err);
-      Alert.alert('Sign Up Failed', 'Could not complete sign up. Please try again.');
+      showFeedback({
+        type: 'error',
+        title: 'Sign Up Failed',
+        message: err?.message || 'Could not complete registration. Please try again.',
+        buttonText: 'Try Again',
+      });
     } finally {
       setIsSubmitting(false);
     }

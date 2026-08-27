@@ -40,6 +40,7 @@ import StandardHeader from '../components/StandardHeader';
 import StripeCheckoutModal from '../components/StripeCheckoutModal';
 import MapLocationPickerModal, { SelectedLocationData } from '../components/MapLocationPickerModal';
 import { authApi, farmerApi, stripeApi } from '../services/api';
+import { showFeedback, showToast } from '../components/FeedbackPopup';
 
 type ProfileNavProp = NativeStackNavigationProp<ProfileStackParamList, 'ProfileHome'>;
 
@@ -645,12 +646,24 @@ export default function ProfileScreen() {
         setIsSignInModalVisible(false);
         setSignInFullName('');
         setSignInPassword('');
-        Alert.alert('Welcome Back!', `Signed in successfully as ${user.fullName}.`);
+        showFeedback({
+          type: 'success',
+          title: 'Welcome Back!',
+          message: `Signed in successfully as ${user.fullName}.`,
+          buttonText: 'Continue',
+        });
         await loadProfiles();
       }
     } catch (err: any) {
       console.error('Sign in failed:', err);
-      setSignInError(err?.message || 'Invalid full name or password. Please try again.');
+      const errMsg = err?.message || 'Invalid full name or password. Please try again.';
+      setSignInError(errMsg);
+      showFeedback({
+        type: 'error',
+        title: 'Sign In Failed',
+        message: errMsg,
+        buttonText: 'Try Again',
+      });
     } finally {
       setIsSigningIn(false);
     }
@@ -666,13 +679,13 @@ export default function ProfileScreen() {
         setCustomerProfile(null);
         setFarmerProfile(null);
         setActiveModeState('customer');
-        if (Platform.OS === 'web') {
-          if (typeof window !== 'undefined') {
-            window.alert('You have been signed out.');
-          }
-        } else {
-          Alert.alert('Signed Out', 'You have been signed out.');
-        }
+        showToast('Signed out successfully. Come back soon!', 'info');
+        showFeedback({
+          type: 'info',
+          title: 'Signed Out',
+          message: 'You have been safely signed out of your EcoHarvest account.',
+          buttonText: 'Got It',
+        });
       } catch (err) {
         console.error('Failed to sign out:', err);
       }

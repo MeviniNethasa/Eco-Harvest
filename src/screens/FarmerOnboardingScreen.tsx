@@ -47,7 +47,8 @@ import {
 } from '../utils/storage';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
 import MapLocationPickerModal, { SelectedLocationData } from '../components/MapLocationPickerModal';
-import { authApi, farmerApi } from '../services/api';
+import { farmerApi, authApi } from '../services/api';
+import { showFeedback } from '../components/FeedbackPopup';
 
 // ---------------------------------------------------------------------------
 // Design tokens (from design.md — Screen M-02 spec)
@@ -675,15 +676,22 @@ export default function FarmerOnboardingScreen() {
         console.error('Failed to switch into Farmer Mode after saving profile:', err);
       }
 
-      Alert.alert(
-        wasFirstTime ? 'Sign Up Complete' : 'Profile Updated',
-        wasFirstTime
-          ? `Welcome, ${saved.legalName}! Your Farmer Dashboard is ready.`
-          : 'Your farmer profile has been updated.',
-      );
-    } catch (err) {
+      showFeedback({
+        type: 'success',
+        title: wasFirstTime ? 'Farmer Registration Complete!' : 'Profile Updated',
+        message: wasFirstTime
+          ? `Welcome to EcoHarvest, ${saved.legalName}! Your farm "${saved.farmName}" is now registered.`
+          : 'Your farmer profile changes have been saved.',
+        buttonText: 'Open Dashboard',
+      });
+    } catch (err: any) {
       console.error('Failed to save farmer profile:', err);
-      Alert.alert('Something went wrong', 'Could not save your profile. Please try again.');
+      showFeedback({
+        type: 'error',
+        title: 'Could Not Save Profile',
+        message: err?.message || 'Failed to save farmer profile. Please check your inputs and try again.',
+        buttonText: 'Try Again',
+      });
     } finally {
       setIsSavingProfile(false);
     }

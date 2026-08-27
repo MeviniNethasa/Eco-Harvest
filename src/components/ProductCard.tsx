@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Crop } from '../types';
 import { addToCart } from '../utils/storage';
+import { showFeedback, showToast } from './FeedbackPopup';
 
 interface ProductCardProps {
   crop: Crop;
@@ -31,13 +32,21 @@ export default function ProductCard({ crop, onAddedToCart }: ProductCardProps) {
     try {
       await addToCart(crop, quantity);
       onAddedToCart?.();
-      Alert.alert(
-        'Added to Cart',
-        `${quantity} x ${crop.name} (${crop.unit}) added.`
-      );
+      showToast(`Added ${quantity} x ${crop.name} to cart!`, 'success');
+      showFeedback({
+        type: 'success',
+        title: 'Added to Cart!',
+        message: `${quantity} ${crop.unit} of ${crop.name} has been added to your shopping cart.`,
+        buttonText: 'Continue Shopping',
+      });
       setQuantity(1);
-    } catch (error) {
-      Alert.alert('Error', 'Could not add item to cart. Please try again.');
+    } catch (error: any) {
+      showFeedback({
+        type: 'error',
+        title: 'Could Not Add to Cart',
+        message: error?.message || 'Failed to update your cart. Please try again.',
+        buttonText: 'OK',
+      });
     }
   };
 
