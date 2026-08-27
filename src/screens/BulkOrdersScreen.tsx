@@ -17,12 +17,14 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -31,12 +33,15 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BulkMatchResult, CustomerProfile, ExtractedListItem, RootTabParamList } from '../types';
+import { BulkMatchResult, BulkOrderSession, CustomerProfile, ExtractedListItem, RootTabParamList } from '../types';
 import {
   addBulkMatchItemsToCart,
+  deleteBulkOrderSession,
   generateCustomerId,
+  getBulkOrderSessions,
   getUserProfile,
   matchHandwrittenListToVerifiedFarmers,
+  saveBulkOrderSession,
   saveUserProfile,
   subscribeToUserProfile,
 } from '../utils/storage';
@@ -83,6 +88,11 @@ export default function BulkOrdersScreen() {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isStripeModalVisible, setIsStripeModalVisible] = useState(false);
 
+  // --- Session & History State ---
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => `bulk_${Date.now()}`);
+  const [historySessions, setHistorySessions] = useState<BulkOrderSession[]>([]);
+  const [isHistoryModalVisible, setIsHistoryModalVisible] = useState(false);
+
   // --- Chat State ---
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_GREETING]);
   const [inputText, setInputText] = useState('');
@@ -92,6 +102,8 @@ export default function BulkOrdersScreen() {
     try {
       const p = await getUserProfile();
       setCustomerProfile(p);
+      const sessions = await getBulkOrderSessions(p?.id);
+      setHistorySessions(sessions);
     } catch (e) {
       console.error('Failed to load profile for bulk orders:', e);
     } finally {
@@ -108,8 +120,69 @@ export default function BulkOrdersScreen() {
   useEffect(() => {
     return subscribeToUserProfile((p) => {
       setCustomerProfile(p);
+      getBulkOrderSessions(p?.id).then(setHistorySessions);
     });
   }, []);
+
+  // Auto-persist active session on message progress
+  useEffect(() => {
+    if (messages.length > 1) {
+      const extractedCount = messages.reduce((acc, m) => acc + (m.items?.length || 0), 0);
+      const confirmedMsg = messages.find((m) => m.isConfirmedCard);
+      const matchMsg = messages.find((m) => m.isMatchCard);
+      const grandTotal = confirmedMsg?.matchResult?.grandTotal || matchMsg?.matchResult?.grandTotal;
+      const status = confirmedMsg ? 'ORDERED' : matchMsg ? 'MATCHED' : 'PENDING';
+
+      const firstCrop = messages.find((m) => m.items && m.items.length > 0)?.items?.[0]?.cropName || 'Custom List';
+      const title = `Bulk Order: ${firstCrop}${extractedCount > 1 ? ` +${extractedCount - 1} more` : ''}`;
+
+      const session: BulkOrderSession = {
+        id: currentSessionId,
+        customerId: customerProfile?.id || 'guest_bulk',
+        customerName: customerProfile?.fullName || 'Customer',
+        title,
+        createdAt: messages[0]?.timestamp || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        messages: messages as any,
+        itemsCount: extractedCount,
+        grandTotal,
+        status,
+      };
+
+      saveBulkOrderSession(session).then(() => {
+        getBulkOrderSessions(customerProfile?.id).then(setHistorySessions);
+      });
+    }
+  }, [messages, currentSessionId, customerProfile]);
+
+  const handleSelectSession = (session: BulkOrderSession) => {
+    setCurrentSessionId(session.id);
+    setMessages(session.messages as ChatMessage[]);
+    setIsHistoryModalVisible(false);
+  };
+
+  const handleStartNewSession = () => {
+    const newId = `bulk_${Date.now()}`;
+    setCurrentSessionId(newId);
+    setMessages([
+      {
+        id: `msg_welcome_${Date.now()}`,
+        sender: 'AGENT',
+        timestamp: new Date().toISOString(),
+        text: "Hi! Upload or snap a handwritten crop list here, and I'll extract the items for your bulk order instantly.",
+      },
+    ]);
+    setIsHistoryModalVisible(false);
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    await deleteBulkOrderSession(sessionId);
+    const updated = await getBulkOrderSessions(customerProfile?.id);
+    setHistorySessions(updated);
+    if (sessionId === currentSessionId) {
+      handleStartNewSession();
+    }
+  };
 
   const isSubscribedCustomer = customerProfile?.subscriptionPlan === 'BULK_ACCESS';
 
@@ -619,6 +692,18 @@ export default function BulkOrdersScreen() {
       <View style={styles.header}>
         <HeaderBranding />
         <View style={styles.badgeContainer}>
+          {isSubscribedCustomer && (
+            <Pressable
+              style={styles.historyBtn}
+              onPress={() => setIsHistoryModalVisible(true)}
+              hitSlop={8}
+            >
+              <Ionicons name="time-outline" size={16} color="#15803D" />
+              <Text style={styles.historyBtnText}>
+                History ({historySessions.length})
+              </Text>
+            </Pressable>
+          )}
           <View style={[styles.planBadge, !isSubscribedCustomer && styles.planBadgeLocked]}>
             <Ionicons
               name={isSubscribedCustomer ? 'sparkles' : 'lock-closed'}
@@ -747,6 +832,131 @@ export default function BulkOrdersScreen() {
         </KeyboardAvoidingView>
       )}
 
+      {/* Bulk Order Process & History Modal */}
+      <Modal
+        visible={isHistoryModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setIsHistoryModalVisible(false)}
+      >
+        <View style={[styles.historyModalContainer, { paddingTop: Math.max(insets.top, 12), paddingBottom: insets.bottom }]}>
+          <View style={styles.historyModalHeader}>
+            <View style={styles.historyHeaderLeft}>
+              <View style={styles.historyIconCircle}>
+                <Ionicons name="time" size={20} color="#15803D" />
+              </View>
+              <View>
+                <Text style={styles.historyModalTitle}>Bulk Order Inquiries</Text>
+                <Text style={styles.historyModalSubtitle}>
+                  View and resume past OCR lists, matched farms & chats
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={styles.historyCloseBtn}
+              onPress={() => setIsHistoryModalVisible(false)}
+              hitSlop={10}
+            >
+              <Ionicons name="close" size={22} color="#374151" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.historyActionRow}>
+            <TouchableOpacity style={styles.startNewBtn} onPress={handleStartNewSession}>
+              <Ionicons name="add-circle-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+              <Text style={styles.startNewBtnText}>Start New Bulk List</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.historyScroll} contentContainerStyle={styles.historyScrollContent}>
+            {historySessions.length === 0 ? (
+              <View style={styles.emptyHistoryBox}>
+                <Ionicons name="receipt-outline" size={42} color="#9CA3AF" />
+                <Text style={styles.emptyHistoryTitle}>No Past Bulk Inquiries</Text>
+                <Text style={styles.emptyHistorySub}>
+                  Upload or type a bulk list in the workspace to see your inquiry history recorded here.
+                </Text>
+              </View>
+            ) : (
+              historySessions.map((sess) => {
+                const isCurrent = sess.id === currentSessionId;
+                const statusBg =
+                  sess.status === 'ORDERED'
+                    ? '#DCFCE7'
+                    : sess.status === 'MATCHED'
+                    ? '#DBEAFE'
+                    : '#FEF3C7';
+                const statusFg =
+                  sess.status === 'ORDERED'
+                    ? '#15803D'
+                    : sess.status === 'MATCHED'
+                    ? '#2563EB'
+                    : '#D97706';
+
+                return (
+                  <View key={sess.id} style={[styles.historyCard, isCurrent && styles.historyCardActive]}>
+                    <View style={styles.historyCardTop}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.historyCardTitle} numberOfLines={1}>
+                          {sess.title}
+                        </Text>
+                        <Text style={styles.historyCardDate}>
+                          {new Date(sess.updatedAt || sess.createdAt).toLocaleDateString([], {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </Text>
+                      </View>
+                      <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
+                        <Text style={[styles.statusBadgeText, { color: statusFg }]}>
+                          {sess.status === 'ORDERED'
+                            ? 'Order Placed'
+                            : sess.status === 'MATCHED'
+                            ? 'Farms Matched'
+                            : 'In Progress'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.historyCardMeta}>
+                      <Text style={styles.historyCardInfo}>
+                        📦 {sess.itemsCount} crop item(s) extracted
+                      </Text>
+                      {sess.grandTotal ? (
+                        <Text style={styles.historyCardTotal}>
+                          Total: {formatLKR(sess.grandTotal)}
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.historyCardActions}>
+                      <TouchableOpacity
+                        style={[styles.resumeSessionBtn, isCurrent && styles.resumeSessionBtnActive]}
+                        onPress={() => handleSelectSession(sess)}
+                      >
+                        <Ionicons name="chatbubble-ellipses-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                        <Text style={styles.resumeSessionBtnText}>
+                          {isCurrent ? 'Viewing Active Chat' : 'Resume / View Process'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.deleteSessionBtn}
+                        onPress={() => handleDeleteSession(sess.id)}
+                        hitSlop={8}
+                      >
+                        <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+
       <StripeCheckoutModal
         visible={isStripeModalVisible}
         onClose={() => setIsStripeModalVisible(false)}
@@ -772,7 +982,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
   },
-  badgeContainer: { flexDirection: 'row', alignItems: 'center' },
+  badgeContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  historyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 12,
+    gap: 4,
+  },
+  historyBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803D',
+  },
   planBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -785,6 +1011,185 @@ const styles = StyleSheet.create({
   planBadgeLocked: { backgroundColor: '#FEF3C7' },
   planBadgeText: { fontSize: 11, fontWeight: '700', color: '#15803D' },
   planBadgeTextLocked: { color: '#B45309' },
+
+  // History Modal Styles
+  historyModalContainer: {
+    flex: 1,
+    backgroundColor: '#FAFAFA',
+  },
+  historyModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  historyHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  historyIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  historyModalSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 1,
+    fontWeight: '500',
+  },
+  historyCloseBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: '#F3F4F6',
+  },
+  historyActionRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  startNewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#15803D',
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  startNewBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  historyScroll: {
+    flex: 1,
+  },
+  historyScrollContent: {
+    padding: 16,
+    paddingBottom: 40,
+    gap: 12,
+  },
+  emptyHistoryBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    gap: 8,
+  },
+  emptyHistoryTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  emptyHistorySub: {
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
+    paddingHorizontal: 24,
+    lineHeight: 18,
+  },
+  historyCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 14,
+    gap: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  historyCardActive: {
+    borderColor: '#15803D',
+    borderWidth: 1.5,
+  },
+  historyCardTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  historyCardTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  historyCardDate: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginTop: 2,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  historyCardMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    padding: 8,
+    borderRadius: 6,
+  },
+  historyCardInfo: {
+    fontSize: 12,
+    color: '#4B5563',
+    fontWeight: '600',
+  },
+  historyCardTotal: {
+    fontSize: 12,
+    color: '#15803D',
+    fontWeight: '800',
+  },
+  historyCardActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  resumeSessionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#15803D',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+  },
+  resumeSessionBtnActive: {
+    backgroundColor: '#047857',
+  },
+  resumeSessionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  deleteSessionBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#FEE2E2',
+  },
 
   // Paywall
   paywallContent: { padding: 20, alignItems: 'center' },

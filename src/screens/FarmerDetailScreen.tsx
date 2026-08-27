@@ -145,28 +145,12 @@ export default function FarmerDetailScreen() {
                     <View style={styles.freshnessBadge}>
                       <Ionicons name="leaf" size={13} color="#15803D" />
                       <Text style={styles.freshnessBadgeText}>
-                        {freshness.average}% Fresh
+                        {freshness.average}% Fresh ({freshness.grade})
                       </Text>
                     </View>
                   )}
                 </View>
               </View>
-
-              {freshness && (
-                <View style={styles.freshnessSummaryRow}>
-                  <View style={styles.freshnessPill}>
-                    <Text style={styles.freshnessPillLabel}>
-                      VGG16 AI Quality Score:
-                    </Text>
-                    <Text style={styles.freshnessPillValue}>
-                      {freshness.average}% ({freshness.grade})
-                    </Text>
-                  </View>
-                  <Text style={styles.freshnessGlobalComparison}>
-                    Platform Avg: {freshness.globalAverage}%
-                  </Text>
-                </View>
-              )}
 
               {formatFarmLocation(farm) ? (
                 <View style={styles.locationRow}>

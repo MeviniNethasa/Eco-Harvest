@@ -707,3 +707,33 @@ export interface HelpTicket {
   createdAt: string | Date;
   updatedAt: string | Date;
 }
+
+// ---------------------------------------------------------------------------
+// Bulk Order Process & Chat History
+// ---------------------------------------------------------------------------
+
+export interface BulkChatMessage {
+  id: string;
+  sender: 'AGENT' | 'USER';
+  timestamp: string;
+  text?: string;
+  imageUri?: string;
+  isExtractionCard?: boolean;
+  isMatchCard?: boolean;
+  isConfirmedCard?: boolean;
+  items?: ExtractedListItem[];
+  matchResult?: BulkMatchResult;
+}
+
+export interface BulkOrderSession {
+  id: string;
+  customerId: string;
+  customerName?: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: BulkChatMessage[];
+  itemsCount: number;
+  grandTotal?: number;
+  status: 'PENDING' | 'MATCHED' | 'ORDERED';
+}

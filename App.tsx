@@ -92,7 +92,6 @@ export default function App() {
           <Animated.View style={[styles.flexFill, { opacity: splashOpacity }]}>
             <SplashScreen onFinish={handleSplashFinish} />
             <FeedbackPopup />
-            <HelpDeskFloatingBadge />
           </Animated.View>
         </SafeAreaProvider>
       </GestureHandlerRootView>

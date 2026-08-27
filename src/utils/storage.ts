@@ -33,6 +33,8 @@ import {
   ProductReview,
   UnavailableListItem,
   VerificationRequest,
+  BulkOrderSession,
+  BulkChatMessage,
 } from '../types';
 import { MOCK_CROPS, MOCK_FARMERS } from '../data/mockData';
 import { aiApi, helpDeskApi, messageApi, orderApi, stripeApi } from '../services/api';
@@ -3191,4 +3193,54 @@ export async function updateHelpTicketStatusLocal(
 export async function getOpenHelpTicketCount(role?: 'CUSTOMER' | 'FARMER'): Promise<number> {
   const tickets = await getAllHelpTickets();
   return tickets.filter((t) => (t.status === 'OPEN' || t.status === 'IN_PROGRESS') && (!role || t.userRole === role)).length;
+}
+
+// ---------------------------------------------------------------------------
+// Bulk Order Process & History Sessions
+// ---------------------------------------------------------------------------
+
+const BULK_SESSIONS_STORAGE_KEY = '@ecoharvest/bulk-order-sessions';
+
+export async function getBulkOrderSessions(customerId?: string): Promise<BulkOrderSession[]> {
+  try {
+    const raw = await AsyncStorage.getItem(BULK_SESSIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const all = JSON.parse(raw) as BulkOrderSession[];
+    if (customerId) {
+      return all.filter((s) => s.customerId === customerId || !s.customerId);
+    }
+    return all;
+  } catch (e) {
+    console.warn('Error reading bulk order sessions:', e);
+    return [];
+  }
+}
+
+export async function saveBulkOrderSession(session: BulkOrderSession): Promise<BulkOrderSession> {
+  try {
+    const all = await getBulkOrderSessions();
+    const existingIdx = all.findIndex((s) => s.id === session.id);
+    let updated: BulkOrderSession[];
+    if (existingIdx >= 0) {
+      updated = [...all];
+      updated[existingIdx] = session;
+    } else {
+      updated = [session, ...all];
+    }
+    await AsyncStorage.setItem(BULK_SESSIONS_STORAGE_KEY, JSON.stringify(updated));
+    return session;
+  } catch (e) {
+    console.warn('Error saving bulk order session:', e);
+    return session;
+  }
+}
+
+export async function deleteBulkOrderSession(sessionId: string): Promise<void> {
+  try {
+    const all = await getBulkOrderSessions();
+    const filtered = all.filter((s) => s.id !== sessionId);
+    await AsyncStorage.setItem(BULK_SESSIONS_STORAGE_KEY, JSON.stringify(filtered));
+  } catch (e) {
+    console.warn('Error deleting bulk order session:', e);
+  }
 }
