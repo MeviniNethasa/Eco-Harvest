@@ -149,28 +149,44 @@ export default function HelpDeskModal({
     }
   }, []);
 
-  const loadTickets = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const list = await getUserHelpTickets(userId || undefined, userRole);
-      setTickets(list);
-    } catch (err) {
-      console.warn('Error loading help tickets:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [userId, userRole]);
-
   useEffect(() => {
-    if (visible) {
-      loadUserContext();
-      loadTickets();
-      const unsub = subscribeToHelpTickets(() => {
-        loadTickets();
+    if (!visible) return;
+
+    loadUserContext();
+
+    let isMounted = true;
+    setIsLoading(true);
+
+    getUserHelpTickets(userId || undefined, userRole)
+      .then((list) => {
+        if (isMounted) {
+          setTickets(list);
+        }
+      })
+      .catch((err) => {
+        console.warn('Error loading help tickets:', err);
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoading(false);
+        }
       });
-      return unsub;
-    }
-  }, [visible, loadUserContext, loadTickets]);
+
+    const unsub = subscribeToHelpTickets((all) => {
+      if (!isMounted) return;
+      const userList = userId
+        ? all.filter((t) => t.userId === userId)
+        : userRole
+        ? all.filter((t) => t.userRole === userRole)
+        : all;
+      setTickets(userList);
+    });
+
+    return () => {
+      isMounted = false;
+      unsub();
+    };
+  }, [visible, userId, userRole, loadUserContext]);
 
   const handleBackToList = () => {
     setSelectedTicketId(null);
@@ -213,7 +229,6 @@ export default function HelpDeskModal({
       setOrderId('');
       setActiveTab('TICKETS');
       setSelectedTicketId(created.ticketId);
-      await loadTickets();
     } catch (err: any) {
       Alert.alert('Submission Error', err?.message || 'Could not create ticket. Please try again.');
     } finally {

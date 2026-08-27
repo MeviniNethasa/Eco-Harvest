@@ -2993,9 +2993,8 @@ export async function getAllHelpTickets(): Promise<HelpTicket[]> {
   try {
     // Attempt to fetch from backend API first
     const res = await helpDeskApi.getAdminTickets();
-    if (res && res.data) {
+    if (res && res.data && Array.isArray(res.data)) {
       await AsyncStorage.setItem(HELP_TICKETS_STORAGE_KEY, JSON.stringify(res.data));
-      notifyHelpTicketListeners(res.data);
       return res.data;
     }
   } catch (err) {
@@ -3016,7 +3015,8 @@ export async function getAllHelpTickets(): Promise<HelpTicket[]> {
 export async function getUserHelpTickets(userId?: string, role?: 'CUSTOMER' | 'FARMER'): Promise<HelpTicket[]> {
   const all = await getAllHelpTickets();
   if (userId) {
-    return all.filter((t) => t.userId === userId);
+    const matched = all.filter((t) => t.userId === userId);
+    if (matched.length > 0) return matched;
   }
   if (role) {
     return all.filter((t) => t.userRole === role);
