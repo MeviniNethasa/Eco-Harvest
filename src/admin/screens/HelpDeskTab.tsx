@@ -17,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { AdminTheme } from '../AdminTheme';
 import { HelpTicket, HelpTicketPriority, HelpTicketStatus } from '../../types';
 import { helpDeskApi } from '../../services/api';
 import { getAllHelpTickets, sendHelpTicketReply, updateHelpTicketStatusLocal, subscribeToHelpTickets } from '../../utils/storage';
