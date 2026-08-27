@@ -97,7 +97,6 @@ export default function FarmerDashboardScreen() {
   const [timeframe, setTimeframe] = useState<Timeframe>('WEEK');
   const [forecastPeriod, setForecastPeriod] = useState<ForecastPeriod>('WEEK');
   const [selectedBarIndex, setSelectedBarIndex] = useState<number | null>(null);
-  const [isAiExplainerVisible, setIsAiExplainerVisible] = useState(false);
 
   const loadData = useCallback(async () => {
     const farmer = await getFarmerProfile();
@@ -566,53 +565,42 @@ export default function FarmerDashboardScreen() {
               </View>
             </View>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <TouchableOpacity
-                style={styles.howItWorksBtn}
-                onPress={() => setIsAiExplainerVisible(true)}
-                hitSlop={8}
-              >
-                <Ionicons name="information-circle-outline" size={15} color="#15803D" />
-                <Text style={styles.howItWorksBtnText}>How It Works</Text>
-              </TouchableOpacity>
-
-              {isVerified && (
-                <View style={styles.forecastToggleTabs}>
-                  <Pressable
+            {isVerified && (
+              <View style={styles.forecastToggleTabs}>
+                <Pressable
+                  style={[
+                    styles.forecastToggleTab,
+                    forecastPeriod === 'WEEK' && styles.forecastToggleTabActive,
+                  ]}
+                  onPress={() => setForecastPeriod('WEEK')}
+                >
+                  <Text
                     style={[
-                      styles.forecastToggleTab,
-                      forecastPeriod === 'WEEK' && styles.forecastToggleTabActive,
+                      styles.forecastToggleText,
+                      forecastPeriod === 'WEEK' && styles.forecastToggleTextActive,
                     ]}
-                    onPress={() => setForecastPeriod('WEEK')}
                   >
-                    <Text
-                      style={[
-                        styles.forecastToggleText,
-                        forecastPeriod === 'WEEK' && styles.forecastToggleTextActive,
-                      ]}
-                    >
-                      Next Week
-                    </Text>
-                  </Pressable>
-                  <Pressable
+                    Next Week
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.forecastToggleTab,
+                    forecastPeriod === 'MONTH' && styles.forecastToggleTabActive,
+                  ]}
+                  onPress={() => setForecastPeriod('MONTH')}
+                >
+                  <Text
                     style={[
-                      styles.forecastToggleTab,
-                      forecastPeriod === 'MONTH' && styles.forecastToggleTabActive,
+                      styles.forecastToggleText,
+                      forecastPeriod === 'MONTH' && styles.forecastToggleTextActive,
                     ]}
-                    onPress={() => setForecastPeriod('MONTH')}
                   >
-                    <Text
-                      style={[
-                        styles.forecastToggleText,
-                        forecastPeriod === 'MONTH' && styles.forecastToggleTextActive,
-                      ]}
-                    >
-                      Next Month
-                    </Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
+                    Next Month
+                  </Text>
+                </Pressable>
+              </View>
+            )}
           </View>
 
           {/* Forecasting Content with Conditional Blur/Lock Gating */}
@@ -676,88 +664,6 @@ export default function FarmerDashboardScreen() {
           </View>
         </View>
       </ScrollView>
-
-      {/* AI Demand & Price Forecasting Architecture Explainer Modal */}
-      <Modal
-        visible={isAiExplainerVisible}
-        animationType="slide"
-        transparent={false}
-        onRequestClose={() => setIsAiExplainerVisible(false)}
-      >
-        <View style={styles.explainerModalContainer}>
-          <View style={styles.explainerHeader}>
-            <View style={styles.explainerHeaderLeft}>
-              <View style={styles.explainerIconCircle}>
-                <Ionicons name="sparkles" size={22} color="#15803D" />
-              </View>
-              <View>
-                <Text style={styles.explainerTitle}>AI Demand & Price Forecasting</Text>
-                <Text style={styles.explainerSub}>How EcoHarvest calculates predictive harvest quotas</Text>
-              </View>
-            </View>
-            <TouchableOpacity
-              style={styles.explainerCloseBtn}
-              onPress={() => setIsAiExplainerVisible(false)}
-              hitSlop={10}
-            >
-              <Ionicons name="close" size={24} color="#374151" />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={styles.explainerScroll} contentContainerStyle={styles.explainerScrollContent}>
-            {/* Step 1: Wholesale Inflow */}
-            <View style={styles.explainerStepCard}>
-              <View style={styles.stepNumBadge}><Text style={styles.stepNumText}>1</Text></View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.stepTitle}>National Economic Center Price Inflows</Text>
-                <Text style={styles.stepDesc}>
-                  EcoHarvest aggregates daily wholesale auction price indices and supply volume feeds from Dambulla, Manning Market (Peliyagoda), and Keppetipola dedicated economic centers across Sri Lanka.
-                </Text>
-              </View>
-            </View>
-
-            {/* Step 2: Demand Elasticity */}
-            <View style={styles.explainerStepCard}>
-              <View style={styles.stepNumBadge}><Text style={styles.stepNumText}>2</Text></View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.stepTitle}>Machine Learning Demand Elasticity Model</Text>
-                <Text style={styles.stepDesc}>
-                  Our predictive AI model analyzes seasonal monsoon weather data, bulk buyer search frequencies, upcoming holiday consumption surges, and historical harvest depletion rates to project demand for the next 7 to 30 days.
-                </Text>
-              </View>
-            </View>
-
-            {/* Step 3: SLSI Organic Premium */}
-            <View style={styles.explainerStepCard}>
-              <View style={styles.stepNumBadge}><Text style={styles.stepNumText}>3</Text></View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.stepTitle}>SLSI SLS 1324 Organic Premium</Text>
-                <Text style={styles.stepDesc}>
-                  Verified organic farms receive automated premium price calculations (typically 15%–25% higher than conventional produce) based on verified chemical-free certifications and high VGG16 freshness scores.
-                </Text>
-              </View>
-            </View>
-
-            {/* Step 4: Harvest Quotas */}
-            <View style={styles.explainerStepCard}>
-              <View style={styles.stepNumBadge}><Text style={styles.stepNumText}>4</Text></View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.stepTitle}>Smart Harvest Quotas & Profit Optimization</Text>
-                <Text style={styles.stepDesc}>
-                  To protect farmers against market gluts and post-harvest spoilage, the algorithm recommends optimal harvest quotas (kg) to ensure 100% sell-through at peak market rates.
-                </Text>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={styles.explainerDoneBtn}
-              onPress={() => setIsAiExplainerVisible(false)}
-            >
-              <Text style={styles.explainerDoneBtnText}>Got It, Back to Dashboard</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -1320,113 +1226,6 @@ const styles = StyleSheet.create({
   publishPromptBtnText: {
     color: '#FFFFFF',
     fontSize: 12,
-    fontWeight: '700',
-  },
-
-  // Explainer Modal Styles
-  explainerModalContainer: {
-    flex: 1,
-    backgroundColor: '#FAFAFA',
-    paddingTop: 16,
-  },
-  explainerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  explainerHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  explainerIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#DCFCE7',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  explainerTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#111827',
-  },
-  explainerSub: {
-    fontSize: 12,
-    color: '#6B7280',
-    fontWeight: '500',
-    marginTop: 1,
-  },
-  explainerCloseBtn: {
-    padding: 6,
-    borderRadius: 20,
-    backgroundColor: '#F3F4F6',
-  },
-  explainerScroll: {
-    flex: 1,
-  },
-  explainerScrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-    gap: 14,
-  },
-  explainerStepCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 14,
-    gap: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  stepNumBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#15803D',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
-  },
-  stepNumText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  stepTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  stepDesc: {
-    fontSize: 12,
-    color: '#4B5563',
-    lineHeight: 18,
-  },
-  explainerDoneBtn: {
-    backgroundColor: '#15803D',
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  explainerDoneBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
     fontWeight: '700',
   },
 });
