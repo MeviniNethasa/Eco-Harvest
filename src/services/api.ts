@@ -337,6 +337,28 @@ export const aiApi = {
       body: JSON.stringify(payload),
     }),
 
+  forecastPipeline: (payload: {
+    cropName: string;
+    category?: string;
+    basePrice?: number;
+    isSLSIVerified?: boolean;
+    period?: 'WEEK' | 'MONTH';
+  }) =>
+    request<{
+      success: boolean;
+      source?: string;
+      data: {
+        predictedMarketDemandKg: number;
+        demandSurgePercentage: number;
+        expectedMarketPriceLkr: number;
+        recommendedHarvestQuotaKg: number;
+        aiConfidenceScore: number;
+      };
+    }>('/ai/forecast-pipeline', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   getHealth: () =>
     request<{ success: boolean; service: string; pythonServiceStatus: string }>('/ai/health'),
 };

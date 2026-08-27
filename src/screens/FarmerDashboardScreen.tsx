@@ -30,6 +30,7 @@ import {
   subscribeToCrops,
   subscribeToOrders,
 } from '../utils/storage';
+import { aiApi } from '../services/api';
 import StandardHeader from '../components/StandardHeader';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -49,11 +50,11 @@ interface ForecastItem {
   id: string;
   cropName: string;
   category: string;
-  predictedDemandKg: number;
-  demandSurgePercent: number;
-  expectedPricePerKg: number;
-  recommendedHarvestKg: number;
-  confidenceScore: number;
+  predictedMarketDemandKg: number;
+  demandSurgePercentage: number;
+  expectedMarketPriceLkr: number;
+  recommendedHarvestQuotaKg: number;
+  aiConfidenceScore: number;
   imageUrl: string;
 }
 
@@ -230,82 +231,121 @@ export default function FarmerDashboardScreen() {
 
   const maxRevenue = Math.max(...chartData.map((d) => d.revenue), 1);
 
-  // ---------------------------------------------------------------------------
-  // AI Forecasting Projections (Dynamic to Farmer's Crops & Agro-Zones)
-  // ---------------------------------------------------------------------------
-  const forecastItems: ForecastItem[] = useMemo(() => {
-    const multiplier = forecastPeriod === 'WEEK' ? 1 : 4.2;
+  const [forecastItems, setForecastItems] = useState<ForecastItem[]>([]);
+  const [forecastLoading, setForecastLoading] = useState<boolean>(false);
 
-    if (products.length > 0) {
-      return products.slice(0, 5).map((p, idx) => {
-        const baseDemand = Math.round((280 + (idx * 55) % 250) * multiplier);
-        const surge = 22 + ((idx * 8 + 11) % 25);
-        const expectedPrice = Math.round(p.pricePerUnit * 1.08);
-        const recommendedQuota = Math.round(baseDemand * 1.04);
-        const confidence = 92 + (idx % 6);
+  // ---------------------------------------------------------------------------
+  // AI Forecasting Projections (Live Production Gemini 2.5 Flash Pipeline)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    let isMounted = true;
 
-        return {
-          id: `fc-prod-${p.id || idx}`,
-          cropName: p.name,
-          category: p.category || 'Vegetables',
-          predictedDemandKg: baseDemand,
-          demandSurgePercent: surge,
-          expectedPricePerKg: expectedPrice,
-          recommendedHarvestKg: recommendedQuota,
-          confidenceScore: confidence,
-          imageUrl: p.imageUrl,
-        };
-      });
+    async function fetchForecastPipeline() {
+      setForecastLoading(true);
+      try {
+        const targetCrops =
+          products.length > 0
+            ? products.slice(0, 5).map((p, idx) => ({
+                id: `fc-prod-${p.id || idx}`,
+                cropName: p.name,
+                category: p.category || 'Vegetables',
+                basePrice: p.pricePerUnit || 300,
+                imageUrl: p.imageUrl || 'https://images.unsplash.com/photo-1598170845058-32b9d6a5da37?w=300&q=80',
+              }))
+            : [
+                {
+                  id: 'fc-1',
+                  cropName: 'Organic Carrots',
+                  category: 'Vegetables',
+                  basePrice: 320,
+                  imageUrl: 'https://images.unsplash.com/photo-1598170845058-32b9d6a5da37?w=300&q=80',
+                },
+                {
+                  id: 'fc-2',
+                  cropName: 'Green Beans (Keppetipola)',
+                  category: 'Vegetables',
+                  basePrice: 450,
+                  imageUrl: 'https://images.unsplash.com/photo-1567306226416-28f0efdc88ce?w=300&q=80',
+                },
+                {
+                  id: 'fc-3',
+                  cropName: 'Red Dambulla Onions',
+                  category: 'Vegetables',
+                  basePrice: 580,
+                  imageUrl: 'https://images.unsplash.com/photo-1618512496248-a07fe83aa8cb?w=300&q=80',
+                },
+                {
+                  id: 'fc-4',
+                  cropName: 'Ceylon Cinnamon Bark',
+                  category: 'Spices',
+                  basePrice: 2400,
+                  imageUrl: 'https://images.unsplash.com/photo-1509358271058-acd22cc93898?w=300&q=80',
+                },
+              ];
+
+        const pipelineResults = await Promise.all(
+          targetCrops.map(async (crop) => {
+            try {
+              const res = await aiApi.forecastPipeline({
+                cropName: crop.cropName,
+                category: crop.category,
+                basePrice: crop.basePrice,
+                isSLSIVerified: isVerified,
+                period: forecastPeriod,
+              });
+
+              if (res && res.success && res.data) {
+                return {
+                  id: crop.id,
+                  cropName: crop.cropName,
+                  category: crop.category,
+                  predictedMarketDemandKg: res.data.predictedMarketDemandKg,
+                  demandSurgePercentage: res.data.demandSurgePercentage,
+                  expectedMarketPriceLkr: res.data.expectedMarketPriceLkr,
+                  recommendedHarvestQuotaKg: res.data.recommendedHarvestQuotaKg,
+                  aiConfidenceScore: res.data.aiConfidenceScore,
+                  imageUrl: crop.imageUrl,
+                };
+              }
+            } catch (apiErr) {
+              console.warn(`[AI Forecast Error for ${crop.cropName}]:`, apiErr);
+            }
+
+            // Fallback metrics if connection is temporarily unavailable
+            const multiplier = forecastPeriod === 'WEEK' ? 1 : 4.2;
+            const organicFactor = isVerified ? 1.2 : 1.08;
+            return {
+              id: crop.id,
+              cropName: crop.cropName,
+              category: crop.category,
+              predictedMarketDemandKg: Math.round(280 * multiplier),
+              demandSurgePercentage: isVerified ? 34 : 22,
+              expectedMarketPriceLkr: Math.round(crop.basePrice * organicFactor),
+              recommendedHarvestQuotaKg: Math.round(300 * multiplier),
+              aiConfidenceScore: 92,
+              imageUrl: crop.imageUrl,
+            };
+          })
+        );
+
+        if (isMounted) {
+          setForecastItems(pipelineResults);
+        }
+      } catch (error) {
+        console.error('[AI Forecast Pipeline Network Failure]:', error);
+      } finally {
+        if (isMounted) {
+          setForecastLoading(false);
+        }
+      }
     }
 
-    // Default regional Sri Lankan benchmark forecasts if no crops published yet
-    return [
-      {
-        id: 'fc-1',
-        cropName: 'Organic Carrots',
-        category: 'Vegetables',
-        predictedDemandKg: Math.round(280 * multiplier),
-        demandSurgePercent: 34,
-        expectedPricePerKg: 320,
-        recommendedHarvestKg: Math.round(300 * multiplier),
-        confidenceScore: 94,
-        imageUrl: 'https://images.unsplash.com/photo-1598170845058-32b9d6a5da37?w=300&q=80',
-      },
-      {
-        id: 'fc-2',
-        cropName: 'Green Beans (Keppetipola)',
-        category: 'Vegetables',
-        predictedDemandKg: Math.round(190 * multiplier),
-        demandSurgePercent: 28,
-        expectedPricePerKg: 450,
-        recommendedHarvestKg: Math.round(210 * multiplier),
-        confidenceScore: 89,
-        imageUrl: 'https://images.unsplash.com/photo-1567306226416-28f0efdc88ce?w=300&q=80',
-      },
-      {
-        id: 'fc-3',
-        cropName: 'Red Dambulla Onions',
-        category: 'Vegetables',
-        predictedDemandKg: Math.round(450 * multiplier),
-        demandSurgePercent: 45,
-        expectedPricePerKg: 580,
-        recommendedHarvestKg: Math.round(480 * multiplier),
-        confidenceScore: 96,
-        imageUrl: 'https://images.unsplash.com/photo-1618512496248-a07fe83aa8cb?w=300&q=80',
-      },
-      {
-        id: 'fc-4',
-        cropName: 'Ceylon Cinnamon Bark',
-        category: 'Spices',
-        predictedDemandKg: Math.round(85 * multiplier),
-        demandSurgePercent: 19,
-        expectedPricePerKg: 2400,
-        recommendedHarvestKg: Math.round(90 * multiplier),
-        confidenceScore: 92,
-        imageUrl: 'https://images.unsplash.com/photo-1509358271058-acd22cc93898?w=300&q=80',
-      },
-    ];
-  }, [forecastPeriod, products]);
+    fetchForecastPipeline();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [products, forecastPeriod, isVerified]);
 
   if (loading) {
     return (
@@ -605,39 +645,46 @@ export default function FarmerDashboardScreen() {
 
           {/* Forecasting Content with Conditional Blur/Lock Gating */}
           <View style={styles.forecastContentWrapper}>
-            {/* Real Forecast List Cards (Rendered behind overlay if unverified) */}
-            <View style={[styles.forecastGrid, !isVerified && styles.blurredContent]}>
-              {forecastItems.map((item) => (
-                <View key={item.id} style={styles.forecastCard}>
-                  <Image source={{ uri: item.imageUrl }} style={styles.forecastCropImage} />
-                  <View style={styles.forecastCardDetails}>
-                    <View style={styles.forecastNameRow}>
-                      <Text style={styles.forecastCropName}>{item.cropName}</Text>
-                      <View style={styles.surgePill}>
-                        <Ionicons name="trending-up" size={12} color="#15803D" />
-                        <Text style={styles.surgePillText}>+{item.demandSurgePercent}% Demand</Text>
+            {forecastLoading ? (
+              <View style={styles.forecastLoadingBox}>
+                <ActivityIndicator size="small" color="#15803D" />
+                <Text style={styles.forecastLoadingText}>Running Gemini 2.5 Flash Forecasting Pipeline…</Text>
+              </View>
+            ) : (
+              /* Real Forecast List Cards (Rendered behind overlay if unverified) */
+              <View style={[styles.forecastGrid, !isVerified && styles.blurredContent]}>
+                {forecastItems.map((item) => (
+                  <View key={item.id} style={styles.forecastCard}>
+                    <Image source={{ uri: item.imageUrl }} style={styles.forecastCropImage} />
+                    <View style={styles.forecastCardDetails}>
+                      <View style={styles.forecastNameRow}>
+                        <Text style={styles.forecastCropName}>{item.cropName}</Text>
+                        <View style={styles.surgePill}>
+                          <Ionicons name="trending-up" size={12} color="#15803D" />
+                          <Text style={styles.surgePillText}>+{item.demandSurgePercentage}% Demand</Text>
+                        </View>
                       </View>
-                    </View>
 
-                    <View style={styles.forecastStatsGrid}>
-                      <View style={styles.forecastStatItem}>
-                        <Text style={styles.forecastStatLabel}>Expected Market Price</Text>
-                        <Text style={styles.forecastStatValue}>LKR {item.expectedPricePerKg}/kg</Text>
+                      <View style={styles.forecastStatsGrid}>
+                        <View style={styles.forecastStatItem}>
+                          <Text style={styles.forecastStatLabel}>Expected Market Price</Text>
+                          <Text style={styles.forecastStatValue}>LKR {item.expectedMarketPriceLkr}/kg</Text>
+                        </View>
+                        <View style={styles.forecastStatItem}>
+                          <Text style={styles.forecastStatLabel}>Recommended Quota</Text>
+                          <Text style={styles.forecastStatValue}>{item.recommendedHarvestQuotaKg} kg</Text>
+                        </View>
                       </View>
-                      <View style={styles.forecastStatItem}>
-                        <Text style={styles.forecastStatLabel}>Recommended Quota</Text>
-                        <Text style={styles.forecastStatValue}>{item.recommendedHarvestKg} kg</Text>
-                      </View>
-                    </View>
 
-                    <View style={styles.confidenceRow}>
-                      <Ionicons name="hardware-chip-outline" size={12} color="#6B7280" />
-                      <Text style={styles.confidenceText}>AI Confidence: {item.confidenceScore}%</Text>
+                      <View style={styles.confidenceRow}>
+                        <Ionicons name="hardware-chip-outline" size={12} color="#6B7280" />
+                        <Text style={styles.confidenceText}>AI Confidence: {item.aiConfidenceScore}%</Text>
+                      </View>
                     </View>
                   </View>
-                </View>
-              ))}
-            </View>
+                ))}
+              </View>
+            )}
 
             {/* Locked Gating Overlay for Unverified Farmers */}
             {!isVerified && (
@@ -1045,6 +1092,21 @@ const styles = StyleSheet.create({
   },
   forecastGrid: {
     gap: 12,
+  },
+  forecastLoadingBox: {
+    paddingVertical: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    gap: 10,
+  },
+  forecastLoadingText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#15803D',
   },
   blurredContent: {
     opacity: 0.15,

@@ -19,6 +19,8 @@
   "author": "EcoHarvest Team",
   "license": "ISC",
   "dependencies": {
+    "@google/genai": "^2.19.0",
+    "@google/generative-ai": "^0.24.1",
     "axios": "^1.19.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
