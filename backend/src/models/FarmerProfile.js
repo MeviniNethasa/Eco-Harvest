@@ -22,6 +22,11 @@ const LocationSchema = new mongoose.Schema(
 
 const FarmerProfileSchema = new mongoose.Schema(
   {
+    farmerId: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',

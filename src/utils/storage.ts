@@ -37,12 +37,13 @@ import {
   BulkChatMessage,
 } from '../types';
 import { MOCK_CROPS, MOCK_FARMERS } from '../data/mockData';
-import { aiApi, helpDeskApi, messageApi, orderApi, stripeApi } from '../services/api';
+import { aiApi, farmerApi, helpDeskApi, messageApi, orderApi, productApi, stripeApi } from '../services/api';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const HELP_TICKETS_STORAGE_KEY = '@ecoharvest/help-tickets';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
 const FARMER_PROFILE_STORAGE_KEY = '@ecoharvest/farmer-profile';
+const REGISTERED_FARMERS_STORAGE_KEY = '@ecoharvest/registered-farmers';
 const USER_PROFILE_KEY = '@ecoharvest/user-profile';
 const ORDERS_STORAGE_KEY = '@ecoharvest/orders';
 const TRACKING_STORAGE_KEY = '@ecoharvest/delivery-tracking';
@@ -66,6 +67,22 @@ const cartListeners = new Set<CartListener>();
 
 function notifyCartListeners(cart: CartItem[]): void {
   cartListeners.forEach((listener) => listener(cart));
+}
+
+/**
+ * Pub/sub for real-time farmer directory changes so MarketplaceScreen (or any
+ * mounted consumer) updates automatically when a farmer registers or edits a farm.
+ */
+type FarmerListener = (farmers: FarmerProfile[]) => void;
+const farmerListeners = new Set<FarmerListener>();
+
+export function notifyFarmerListeners(farmers: FarmerProfile[]): void {
+  farmerListeners.forEach((listener) => listener(farmers));
+}
+
+export function subscribeToFarmers(listener: FarmerListener): () => void {
+  farmerListeners.add(listener);
+  return () => farmerListeners.delete(listener);
 }
 
 /**
@@ -386,6 +403,29 @@ export async function saveFarmerProfile(profile: FarmerProfile): Promise<FarmerP
     isSLSIVerified: profile.verificationStatus === 'VERIFIED',
   };
   await AsyncStorage.setItem(FARMER_PROFILE_STORAGE_KEY, JSON.stringify(normalized));
+
+  // Persist to all registered farms catalog so any customer or session can see this farm
+  try {
+    const rawRegistered = await AsyncStorage.getItem(REGISTERED_FARMERS_STORAGE_KEY);
+    const existing: FarmerProfile[] = rawRegistered ? JSON.parse(rawRegistered) : [];
+    const idx = existing.findIndex(
+      (f) =>
+        f.id === normalized.id ||
+        (f.farmName && f.farmName.trim().toLowerCase() === normalized.farmName.trim().toLowerCase()) ||
+        (f.mobileNumber && normalized.mobileNumber && f.mobileNumber.trim() === normalized.mobileNumber.trim())
+    );
+    let updatedList: FarmerProfile[];
+    if (idx >= 0) {
+      updatedList = existing.map((f, i) => (i === idx ? normalized : f));
+    } else {
+      updatedList = [normalized, ...existing];
+    }
+    await AsyncStorage.setItem(REGISTERED_FARMERS_STORAGE_KEY, JSON.stringify(updatedList));
+    notifyFarmerListeners(updatedList);
+  } catch (err) {
+    console.error('Failed to update registered farmers catalog:', err);
+  }
+
   return normalized;
 }
 
@@ -635,69 +675,252 @@ export async function setActiveMode(mode: AppMode): Promise<AppMode> {
  * synchronous version — callers need `await`.
  */
 export async function getFarmers(): Promise<FarmerProfile[]> {
-  const onDeviceProfile = await getFarmerProfile();
-  if (!onDeviceProfile) {
-    return [...MOCK_FARMERS];
+  let registered: FarmerProfile[] = [];
+  try {
+    const rawRegistered = await AsyncStorage.getItem(REGISTERED_FARMERS_STORAGE_KEY);
+    if (rawRegistered) {
+      registered = JSON.parse(rawRegistered) as FarmerProfile[];
+    }
+  } catch (err) {
+    console.error('Failed to read registered farmers from storage:', err);
   }
 
-  const existingIndex = MOCK_FARMERS.findIndex(
-    (farmer) => farmer.id === onDeviceProfile.id
-  );
-  if (existingIndex >= 0) {
-    return MOCK_FARMERS.map((farmer, i) =>
-      i === existingIndex ? onDeviceProfile : farmer
+  const onDeviceProfile = await getFarmerProfile();
+  if (onDeviceProfile) {
+    const exists = registered.some(
+      (f) =>
+        f.id === onDeviceProfile.id ||
+        (f.farmName && f.farmName.trim().toLowerCase() === onDeviceProfile.farmName.trim().toLowerCase())
     );
+    if (!exists) {
+      registered = [onDeviceProfile, ...registered];
+    } else {
+      registered = registered.map((f) =>
+        f.id === onDeviceProfile.id ||
+        (f.farmName && f.farmName.trim().toLowerCase() === onDeviceProfile.farmName.trim().toLowerCase())
+          ? onDeviceProfile
+          : f
+      );
+    }
   }
-  return [onDeviceProfile, ...MOCK_FARMERS];
+
+  // Merge registered with MOCK_FARMERS (registered farms take priority)
+  const registeredIds = new Set(registered.map((f) => f.id));
+  const registeredNames = new Set(registered.map((f) => f.farmName?.trim().toLowerCase()));
+  const mockToAdd = MOCK_FARMERS.filter(
+    (mf) => !registeredIds.has(mf.id) && !registeredNames.has(mf.farmName?.trim().toLowerCase())
+  );
+  const merged = [...registered, ...mockToAdd];
+
+  // Asynchronously query live MongoDB backend to discover any newly added farms
+  farmerApi
+    .getAll()
+    .then(async (res) => {
+      if (res && res.success && Array.isArray(res.data) && res.data.length > 0) {
+        const backendFarms: FarmerProfile[] = res.data.map((bf: any) => ({
+          id: bf.farmerId || bf._id?.toString() || bf.id || generateFarmerId(),
+          legalName: bf.ownerName || bf.legalName || 'Farm Owner',
+          farmName: bf.farmName || 'EcoHarvest Farm',
+          mobileNumber: bf.mobileNumber || '',
+          province: bf.province || bf.location?.province || '',
+          district: bf.district || bf.location?.district || '',
+          city: bf.city || bf.location?.city || '',
+          description: bf.description || '',
+          slsiCertificateUri: bf.slsiCertificateUrl || null,
+          verificationStatus:
+            bf.slsiStatus === 'VERIFIED' || bf.isSLSIVerified
+              ? 'VERIFIED'
+              : bf.slsiStatus === 'REJECTED'
+              ? 'REJECTED'
+              : 'PENDING_VERIFICATION',
+          isSLSIVerified: bf.isSLSIVerified || bf.slsiStatus === 'VERIFIED',
+          commissionRate: bf.commissionRate || 5.0,
+          farmCoverPhotoUrl: bf.farmCoverPhotoUrl || undefined,
+          bankDetails: bf.bankDetails || {
+            bankName: '',
+            branchCode: '',
+            accountNumber: '',
+            accountHolderName: '',
+          },
+        }));
+
+        let currentRegistered: FarmerProfile[] = [];
+        try {
+          const raw = await AsyncStorage.getItem(REGISTERED_FARMERS_STORAGE_KEY);
+          if (raw) currentRegistered = JSON.parse(raw);
+        } catch (_) {}
+
+        let updated = [...currentRegistered];
+        let hasNew = false;
+        backendFarms.forEach((bf) => {
+          const idx = updated.findIndex(
+            (f) =>
+              f.id === bf.id ||
+              (f.farmName && f.farmName.trim().toLowerCase() === bf.farmName.trim().toLowerCase()) ||
+              (f.mobileNumber && bf.mobileNumber && f.mobileNumber.trim() === bf.mobileNumber.trim())
+          );
+          if (idx >= 0) {
+            updated[idx] = { ...updated[idx], ...bf };
+          } else {
+            updated.push(bf);
+            hasNew = true;
+          }
+        });
+
+        await AsyncStorage.setItem(REGISTERED_FARMERS_STORAGE_KEY, JSON.stringify(updated));
+        if (hasNew) {
+          notifyFarmerListeners(updated);
+        }
+      }
+    })
+    .catch(() => {
+      // Offline fallback: keep local merged
+    });
+
+  return merged;
 }
 
 /**
- * Look up a single farm profile by id (e.g. for a Farm Profile Page header).
- * Checks the on-device profile first (so a freshly onboarded/edited farmer
- * resolves correctly even if `MOCK_FARMERS` has no matching entry), then
- * falls back to the static directory. Returns `null` if no farmer with that
- * id is registered anywhere.
- *
- * Async (AsyncStorage-backed), unlike the old synchronous version —
- * callers need `await`.
+ * Look up a single farm profile by id or farm name.
+ * Checks the on-device profile, all registered profiles, static mock data,
+ * and falls back to live MongoDB backend.
  */
 export async function getFarmerById(farmerId: string): Promise<FarmerProfile | null> {
+  const targetId = farmerId?.toString().trim();
+  if (!targetId) return null;
+
   const onDeviceProfile = await getFarmerProfile();
-  if (onDeviceProfile && onDeviceProfile.id === farmerId) {
+  if (
+    onDeviceProfile &&
+    (onDeviceProfile.id === targetId ||
+      onDeviceProfile.farmName.trim().toLowerCase() === targetId.toLowerCase())
+  ) {
     return onDeviceProfile;
   }
-  return MOCK_FARMERS.find((farmer) => farmer.id === farmerId) ?? null;
+
+  try {
+    const rawRegistered = await AsyncStorage.getItem(REGISTERED_FARMERS_STORAGE_KEY);
+    if (rawRegistered) {
+      const registered: FarmerProfile[] = JSON.parse(rawRegistered);
+      const match = registered.find(
+        (f) =>
+          f.id === targetId ||
+          (f.farmName && f.farmName.trim().toLowerCase() === targetId.toLowerCase()) ||
+          (f.mobileNumber && f.mobileNumber.trim() === targetId)
+      );
+      if (match) return match;
+    }
+  } catch (err) {
+    console.error('Failed to read registered farmers from storage:', err);
+  }
+
+  const mockMatch = MOCK_FARMERS.find(
+    (farmer) =>
+      farmer.id === targetId ||
+      farmer.farmName.trim().toLowerCase() === targetId.toLowerCase()
+  );
+  if (mockMatch) return mockMatch;
+
+  // Fallback: fetch from live backend API
+  try {
+    const res = await farmerApi.getById(targetId);
+    if (res && res.data) {
+      const bf = res.data;
+      return {
+        id: bf.farmerId || bf._id?.toString() || bf.id || targetId,
+        legalName: bf.ownerName || bf.legalName || 'Farm Owner',
+        farmName: bf.farmName || 'EcoHarvest Farm',
+        mobileNumber: bf.mobileNumber || '',
+        province: bf.province || bf.location?.province || '',
+        district: bf.district || bf.location?.district || '',
+        city: bf.city || bf.location?.city || '',
+        description: bf.description || '',
+        slsiCertificateUri: bf.slsiCertificateUrl || null,
+        verificationStatus:
+          bf.slsiStatus === 'VERIFIED' || bf.isSLSIVerified
+            ? 'VERIFIED'
+            : bf.slsiStatus === 'REJECTED'
+            ? 'REJECTED'
+            : 'PENDING_VERIFICATION',
+        isSLSIVerified: bf.isSLSIVerified || bf.slsiStatus === 'VERIFIED',
+        commissionRate: bf.commissionRate || 5.0,
+        farmCoverPhotoUrl: bf.farmCoverPhotoUrl || undefined,
+        bankDetails: bf.bankDetails || {
+          bankName: '',
+          branchCode: '',
+          accountNumber: '',
+          accountHolderName: '',
+        },
+      };
+    }
+  } catch (_) {}
+
+  return null;
 }
 
 /**
  * Every product/crop listing belonging to a single farm, for the Farm
  * Profile Page's product grid.
- *
- * Previously this treated the live (AsyncStorage-backed) crop catalog and
- * the static `MOCK_CROPS` seed set as mutually exclusive — falling back to
- * `MOCK_CROPS` only when the stored catalog was completely empty. That
- * meant the moment any farmer published their first crop, every seeded
- * `MOCK_CROPS` listing for every farm silently disappeared, since the
- * stored catalog was now "non-empty" and took over entirely.
- *
- * This now merges the two sources: stored crops (farmer-published listings
- * and edits) plus any `MOCK_CROPS` entries that aren't already represented
- * in storage (by id), so seed data and newly published crops coexist. If a
- * stored crop happens to share an id with a mock one (e.g. an edited seed
- * listing), the stored version wins. Only then is the merged set filtered
- * down to this farm's exact `farmerId`.
+ * Matches by farmerId, farm.id, or farmName, and merges live products.
  */
 export async function getProductsByFarmerId(farmerId: string): Promise<Crop[]> {
+  const targetId = farmerId?.toString().trim();
+  const farm = await getFarmerById(farmerId);
+  const targetFarmName = farm?.farmName?.trim().toLowerCase();
+
   const storedCrops = await getCrops();
   const storedIds = new Set(storedCrops.map((crop) => crop.id));
   const mockOnly = MOCK_CROPS.filter((crop) => !storedIds.has(crop.id));
   const merged = [...storedCrops, ...mockOnly];
-  // Compare as trimmed strings rather than `===` so a crop never silently
-  // drops out of its farm's storefront over a stray type/whitespace
-  // mismatch (e.g. a crop.farmerId that round-tripped through storage as
-  // something not strictly identical to the route param string).
-  const targetId = farmerId?.toString().trim();
-  return merged.filter((crop) => crop.farmerId?.toString().trim() === targetId);
+
+  // Try fetching products from backend in background to keep catalog synced
+  if (targetId) {
+    productApi
+      .getAll({ farmerId: targetId })
+      .then(async (res) => {
+        if (res && res.success && Array.isArray(res.data) && res.data.length > 0) {
+          const backendCrops: Crop[] = res.data.map((bp: any) => ({
+            id: bp._id?.toString() || bp.id || generateCropId(),
+            farmerId: bp.farmerId || targetId,
+            name: bp.title || bp.name || 'Crop',
+            category: bp.category || 'Vegetables',
+            pricePerUnit: bp.pricePerKg || bp.pricePerUnit || 100,
+            unit: bp.unit || '1kg',
+            availableQtyKg: bp.availableQuantity || bp.availableQtyKg || 100,
+            imageUrl:
+              bp.imageUrl ||
+              'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=400&q=60',
+            isSLSIVerified: bp.isSLSIVerified ?? false,
+            farmName: bp.farmName || farm?.farmName || '',
+            province: bp.province || farm?.province || '',
+            district: bp.district || farm?.district || '',
+            city: bp.city || farm?.city || '',
+          }));
+
+          const existing = await getCrops();
+          let changed = false;
+          const currentMap = new Map(existing.map((c) => [c.id, c]));
+          backendCrops.forEach((bc) => {
+            if (!currentMap.has(bc.id)) {
+              existing.unshift(bc);
+              changed = true;
+            }
+          });
+          if (changed) {
+            await saveCrops(existing);
+          }
+        }
+      })
+      .catch(() => {});
+  }
+
+  return merged.filter((crop) => {
+    const cFarmerId = crop.farmerId?.toString().trim();
+    if (cFarmerId && cFarmerId === targetId) return true;
+    if (farm?.id && cFarmerId === farm.id.toString().trim()) return true;
+    if (targetFarmName && crop.farmName && crop.farmName.trim().toLowerCase() === targetFarmName) return true;
+    return false;
+  });
 }
 
 // ---------------------------------------------------------------------------

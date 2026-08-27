@@ -22,7 +22,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
 import { FarmerProfile, MarketplaceStackParamList } from '../types';
-import { getFarmers, getFavoriteFarmerIds, toggleFavoriteFarmer } from '../utils/storage';
+import { getFarmers, getFavoriteFarmerIds, toggleFavoriteFarmer, subscribeToFarmers } from '../utils/storage';
 import SLSIBadge from '../components/SLSIBadge';
 import HeaderBranding from '../components/HeaderBranding';
 
@@ -127,6 +127,13 @@ export default function MarketplaceScreen() {
       loadData();
     }, [loadData])
   );
+
+  React.useEffect(() => {
+    const unsubscribe = subscribeToFarmers(() => {
+      loadData();
+    });
+    return unsubscribe;
+  }, [loadData]);
 
   const handleToggleFavorite = useCallback(
     async (farmerId: string) => {

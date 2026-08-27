@@ -25,6 +25,8 @@ import {
   getFarmerFreshnessScore,
   FarmerFreshnessScore,
   getProductsByFarmerId,
+  subscribeToCrops,
+  subscribeToFarmers,
 } from '../utils/storage';
 import ProductCard from '../components/ProductCard';
 import SLSIBadge from '../components/SLSIBadge';
@@ -95,6 +97,19 @@ export default function FarmerDetailScreen() {
       loadRatingAndFreshness();
     }, [loadProducts, loadRatingAndFreshness])
   );
+
+  useEffect(() => {
+    const unsubCrops = subscribeToCrops(() => {
+      loadProducts();
+    });
+    const unsubFarmers = subscribeToFarmers(() => {
+      getFarmerById(farmerId).then((res) => setFarm(res));
+    });
+    return () => {
+      unsubCrops();
+      unsubFarmers();
+    };
+  }, [farmerId, loadProducts]);
 
   const handleAddedToCart = useCallback(() => {
     setRefreshKey((prev) => prev + 1);

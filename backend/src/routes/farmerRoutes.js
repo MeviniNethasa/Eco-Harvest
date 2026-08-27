@@ -32,7 +32,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/farmers/:id (Get single farm profile by ID, userId, or mobileNumber)
+// GET /api/farmers/:id (Get single farm profile by ID, userId, mobileNumber, or farmName)
 router.get('/:id', async (req, res) => {
   try {
     const mongoose = require('mongoose');
@@ -42,7 +42,16 @@ router.get('/:id', async (req, res) => {
       farmer = await FarmerProfile.findById(id);
     }
     if (!farmer) {
-      farmer = await FarmerProfile.findOne({ $or: [{ userId: id }, { mobileNumber: id }, { _id: id }] });
+      const orConditions = [
+        { farmerId: id },
+        { mobileNumber: id },
+        { farmName: { $regex: `^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } },
+      ];
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        orConditions.push({ userId: id });
+        orConditions.push({ _id: id });
+      }
+      farmer = await FarmerProfile.findOne({ $or: orConditions });
     }
     if (!farmer) {
       return res.status(404).json({ success: false, message: 'Farm profile not found' });
@@ -56,8 +65,10 @@ router.get('/:id', async (req, res) => {
 // POST /api/farmers/profile (Create or update farmer profile)
 router.post('/profile', async (req, res) => {
   try {
+    const mongoose = require('mongoose');
     const {
       id,
+      farmerId,
       userId,
       ownerName,
       legalName,
@@ -84,13 +95,24 @@ router.post('/profile', async (req, res) => {
       });
     }
 
+    const fid = id || farmerId || '';
     let farmer = null;
-    if (id) {
-      farmer = await FarmerProfile.findById(id);
-    } else if (userId) {
+    if (fid && mongoose.Types.ObjectId.isValid(fid)) {
+      farmer = await FarmerProfile.findById(fid);
+    }
+    if (!farmer && fid) {
+      farmer = await FarmerProfile.findOne({ farmerId: fid });
+    }
+    if (!farmer && userId && mongoose.Types.ObjectId.isValid(userId)) {
       farmer = await FarmerProfile.findOne({ userId });
-    } else {
+    }
+    if (!farmer && mobileNumber) {
       farmer = await FarmerProfile.findOne({ mobileNumber });
+    }
+    if (!farmer && farmName) {
+      farmer = await FarmerProfile.findOne({
+        farmName: { $regex: `^${farmName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+      });
     }
 
     const loc = location || {
@@ -100,6 +122,7 @@ router.post('/profile', async (req, res) => {
     };
 
     if (farmer) {
+      if (fid && !farmer.farmerId) farmer.farmerId = fid;
       farmer.ownerName = actualOwnerName;
       farmer.mobileNumber = mobileNumber;
       farmer.farmName = farmName;
@@ -117,7 +140,8 @@ router.post('/profile', async (req, res) => {
       await farmer.save();
     } else {
       farmer = await FarmerProfile.create({
-        userId: userId || null,
+        farmerId: fid || `farmer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        userId: userId && mongoose.Types.ObjectId.isValid(userId) ? userId : null,
         ownerName: actualOwnerName,
         mobileNumber,
         farmName,
