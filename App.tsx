@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { StyleSheet, Animated, Platform } from 'react-native';
+import { StyleSheet, Animated, Platform, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import TabNavigator from './src/navigation/TabNavigator';
@@ -74,29 +76,37 @@ export default function App() {
   // immediately, regardless of splash state above.
   if (isAdminRoute) {
     return (
-      <>
-        <AdminPortalScreen />
-        <FeedbackPopup />
-      </>
+      <GestureHandlerRootView style={styles.flexFill}>
+        <SafeAreaProvider>
+          <AdminPortalScreen />
+          <FeedbackPopup />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
     );
   }
 
   if (showSplash) {
     return (
-      <Animated.View style={[styles.flexFill, { opacity: splashOpacity }]}>
-        <SplashScreen onFinish={handleSplashFinish} />
-        <FeedbackPopup />
-        <HelpDeskFloatingBadge />
-      </Animated.View>
+      <GestureHandlerRootView style={styles.flexFill}>
+        <SafeAreaProvider>
+          <Animated.View style={[styles.flexFill, { opacity: splashOpacity }]}>
+            <SplashScreen onFinish={handleSplashFinish} />
+            <FeedbackPopup />
+            <HelpDeskFloatingBadge />
+          </Animated.View>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
     );
   }
 
   return (
-    <>
-      <TabNavigator />
-      <FeedbackPopup />
-      <HelpDeskFloatingBadge />
-    </>
+    <GestureHandlerRootView style={styles.flexFill}>
+      <SafeAreaProvider>
+        <TabNavigator />
+        <FeedbackPopup />
+        <HelpDeskFloatingBadge />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
