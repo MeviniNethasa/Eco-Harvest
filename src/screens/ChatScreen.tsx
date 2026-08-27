@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -23,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { ChatMessage, ChatThread } from '../types';
 import {
+  checkContentModeration,
   generateChatThreadId,
   getAllChatThreads,
   getChatMessages,
@@ -184,6 +186,19 @@ export default function ChatScreen() {
 
       setIsSending(true);
       try {
+        // Run strict real-time moderation engine
+        const modResult = await checkContentModeration(text, 'chat');
+        if (!modResult.allowed) {
+          Alert.alert(
+            'Message Not Allowed',
+            modResult.reason ||
+              'This message violates platform safety rules (e.g., contact numbers, emails, or offensive language). Please edit your message.',
+            [{ text: 'Edit Message', style: 'cancel' }]
+          );
+          setIsSending(false);
+          return;
+        }
+
         await sendChatMessage(selectedThreadId, text, currentUserRole);
         setDraft('');
         loadThreadsList();
@@ -424,7 +439,7 @@ export default function ChatScreen() {
                   <View style={styles.blockedCard}>
                     <Ionicons name="alert-circle" size={16} color="#DC2626" />
                     <Text style={styles.blockedCardText}>
-                      Off-platform contact info blocked for transaction safety.
+                      {message.blockedReason || 'Off-platform contact info blocked for transaction safety.'}
                     </Text>
                   </View>
                 )}

@@ -325,6 +325,18 @@ export const aiApi = {
       body: JSON.stringify(payload),
     }),
 
+  moderateContent: (payload: { text: string; context?: 'chat' | 'review' }) =>
+    request<{
+      success: boolean;
+      allowed: boolean;
+      category?: string;
+      reason?: string;
+      source?: string;
+    }>('/ai/moderate-content', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   getHealth: () =>
     request<{ success: boolean; service: string; pythonServiceStatus: string }>('/ai/health'),
 };

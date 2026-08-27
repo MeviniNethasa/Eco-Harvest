@@ -30,7 +30,7 @@ import {
   VerificationRequest,
 } from '../types';
 import { MOCK_CROPS, MOCK_FARMERS } from '../data/mockData';
-import { messageApi, orderApi, stripeApi } from '../services/api';
+import { aiApi, messageApi, orderApi, stripeApi } from '../services/api';
 
 const CART_STORAGE_KEY = '@ecoharvest/cart';
 const CROPS_STORAGE_KEY = '@ecoharvest/crops';
@@ -2405,6 +2405,75 @@ export function checkOffPlatformViolation(text: string): boolean {
   return false;
 }
 
+export interface ModerationResult {
+  allowed: boolean;
+  category?: 'NONE' | 'CONTACT_NUMBER' | 'EMAIL' | 'PROFANITY' | 'OFF_PLATFORM' | string;
+  reason?: string;
+  source?: string;
+}
+
+/**
+ * Strict real-time content moderation engine with Gemini AI integration.
+ * Evaluates messages and reviews for:
+ * 1. Phone / WhatsApp numbers
+ * 2. Email addresses
+ * 3. Profanity & inappropriate language
+ * Respects smart exemptions (weights, pricing, address numbers).
+ */
+export async function checkContentModeration(
+  text: string,
+  context: 'chat' | 'review' = 'chat'
+): Promise<ModerationResult> {
+  if (typeof text !== 'string') return { allowed: true, category: 'NONE', reason: '' };
+  const trimmed = text.trim();
+  if (!trimmed) return { allowed: true, category: 'NONE', reason: '' };
+
+  // 1. Ultra-fast local regex pre-filter
+  if (SL_MOBILE_REGEX.test(collapseSeparators(trimmed))) {
+    return {
+      allowed: false,
+      category: 'CONTACT_NUMBER',
+      reason: 'Sharing personal phone numbers is not permitted to protect platform safety.',
+      source: 'local_filter',
+    };
+  }
+
+  if (EMAIL_REGEX.test(trimmed)) {
+    return {
+      allowed: false,
+      category: 'EMAIL',
+      reason: 'Sharing email addresses is not permitted. Please keep all communication inside EcoHarvest.',
+      source: 'local_filter',
+    };
+  }
+
+  if (URL_REGEX.test(trimmed) || BARE_DOMAIN_REGEX.test(trimmed)) {
+    return {
+      allowed: false,
+      category: 'OFF_PLATFORM',
+      reason: 'External web links are not permitted.',
+      source: 'local_filter',
+    };
+  }
+
+  // 2. Deep semantic check via Gemini AI endpoint
+  try {
+    const res = await aiApi.moderateContent({ text: trimmed, context });
+    if (res && res.success !== false) {
+      return {
+        allowed: res.allowed !== false,
+        category: res.category || 'NONE',
+        reason: res.reason || '',
+        source: res.source || 'gemini_ai',
+      };
+    }
+  } catch (err: any) {
+    console.log('Gemini moderation check notice (offline mode active):', err?.message);
+  }
+
+  return { allowed: true, category: 'NONE', reason: '', source: 'heuristic' };
+}
+
 type ChatMessageMap = Record<string, ChatMessage[]>;
 type ChatThreadMap = Record<string, ChatThread>;
 
@@ -2617,12 +2686,16 @@ export async function sendChatMessage(
     throw new Error('sendChatMessage requires a threadId and non-empty text.');
   }
 
+  const modResult = await checkContentModeration(trimmed, 'chat');
+  const isBlocked = !modResult.allowed;
+
   const message: ChatMessage = {
     id: generateChatMessageId(),
     senderId: senderRole === 'CUSTOMER' ? 'current_customer' : 'current_farmer',
     senderRole,
     text: trimmed,
-    isBlocked: checkOffPlatformViolation(trimmed),
+    isBlocked,
+    blockedReason: isBlocked ? (modResult.reason || 'Restricted content detected') : undefined,
     timestamp: new Date().toISOString(),
   };
 

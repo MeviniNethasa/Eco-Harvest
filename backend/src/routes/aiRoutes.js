@@ -348,4 +348,140 @@ router.post('/assess-freshness', upload.single('image'), async (req, res) => {
   }
 });
 
+// Content moderation helper combining fast regex heuristic + Gemini AI
+async function moderateContent(text, context = 'chat') {
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    return { allowed: true, category: 'NONE', reason: '' };
+  }
+
+  const trimmed = text.trim();
+
+  // 1. FAST LOCAL PRE-CHECK (0ms latency for common patterns)
+  const collapsed = trimmed.replace(/[\s\-\(\)\.]+/g, '');
+  const slPhoneRegex = /(?:\+?94|0)0?7\d{8}|(?:\b\d{10}\b)/;
+  const spelledPhoneRegex = /(?:zero|one|two|three|four|five|six|seven|eight|nine)(?:\s+(?:zero|one|two|three|four|five|six|seven|eight|nine)){4,}/i;
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+  const obfuscatedEmailRegex = /[a-zA-Z0-9._%+-]+\s*(?:@|\[at\]|\(at\))\s*[a-zA-Z0-9.-]+\s*(?:\.|\[dot\]|\(dot\)|dot)\s*(?:com|net|org|lk|io|co|info|biz|me|app)/i;
+  const offPlatformKeywords = /\b(?:whatsapp|viber|telegram|direct pay|transfer cash|bank transfer|pay off platform)\b/i;
+  const profanityKeywords = /\b(?:fuck|shit|bitch|bastard|asshole|dick|cunt|piss|whore|slut|pakaya|huththa|ponnaya|kariyo)\b/i;
+
+  if (slPhoneRegex.test(collapsed) || spelledPhoneRegex.test(trimmed)) {
+    return {
+      allowed: false,
+      category: 'CONTACT_NUMBER',
+      reason: 'Sharing personal phone numbers is not permitted to protect platform safety.',
+      source: 'local_filter',
+    };
+  }
+
+  if (emailRegex.test(trimmed) || obfuscatedEmailRegex.test(trimmed)) {
+    return {
+      allowed: false,
+      category: 'EMAIL',
+      reason: 'Sharing email addresses is not permitted. Please communicate within EcoHarvest.',
+      source: 'local_filter',
+    };
+  }
+
+  if (offPlatformKeywords.test(trimmed)) {
+    return {
+      allowed: false,
+      category: 'OFF_PLATFORM',
+      reason: 'Direct off-platform payment and communication mentions are not permitted.',
+      source: 'local_filter',
+    };
+  }
+
+  if (profanityKeywords.test(trimmed)) {
+    return {
+      allowed: false,
+      category: 'PROFANITY',
+      reason: 'Profanity and offensive language are strictly prohibited on EcoHarvest.',
+      source: 'local_filter',
+    };
+  }
+
+  // 2. GEMINI AI DEEP MODERATION (Detects written numbers, disguised emails & profanities)
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (apiKey) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`;
+      const systemPrompt = `You are a strict, real-time chat and review content moderation engine for EcoHarvest, an agricultural produce marketplace.
+Analyze the following ${context} text for platform safety violations.
+
+CRITICAL RULES TO ENFORCE (Mark allowed: false):
+1. CONTACT NUMBERS: Block any sequence of numbers or written/spelled-out numbers that look like a phone number, WhatsApp number, or mobile number (e.g., "0771234567", "+94 77...", "zero seven seven...", "call me at 07...", "O77-123-4567").
+2. EMAIL ADDRESSES: Block any text containing an email pattern or obfuscated email (e.g., "name@domain.com", "name [at] gmail [dot] com", "name at yahoo dot com").
+3. PROFANITY & BAD WORDS: Block any insults, swear words, vulgar terminology, offensive language, threats, or highly inappropriate behavior.
+4. OFF-PLATFORM TRANSACTIONS: Block attempts to trade or pay outside the app escrow.
+
+SMART EXEMPTIONS (DO NOT BLOCK - Mark allowed: true):
+- Numbers related to product quantities, weights, or dimensions (e.g., "I want 5kg", "Send 500g", "10 bundles", "25 crates").
+- Numbers related to pricing or currency (e.g., "Is it 500 rupees?", "Rs. 1,200 total", "350 per kilo").
+- Normal house/building addresses (e.g., "Deliver to No. 45, Temple Road").
+- Normal polite greetings or friendly platform chat (e.g., "Good morning, is this fresh?", "Thanks for the harvest").
+
+Text to analyze: "${trimmed}"
+
+Return ONLY valid JSON matching this schema:
+{
+  "allowed": true or false,
+  "category": "NONE" | "CONTACT_NUMBER" | "EMAIL" | "PROFANITY" | "OFF_PLATFORM",
+  "reason": "Short user-facing explanation in clean English explaining why it was blocked if allowed is false, or empty string if allowed is true"
+}`;
+
+      const geminiRes = await axios.post(
+        url,
+        {
+          contents: [{ parts: [{ text: systemPrompt }] }],
+          generationConfig: {
+            response_mime_type: 'application/json',
+            temperature: 0.1,
+          },
+        },
+        { timeout: 5000 }
+      );
+
+      const candidateText = geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (candidateText) {
+        const parsed = JSON.parse(candidateText);
+        return {
+          allowed: Boolean(parsed.allowed),
+          category: parsed.category || (parsed.allowed ? 'NONE' : 'RESTRICTED_CONTENT'),
+          reason: parsed.reason || (parsed.allowed ? '' : 'This content violates platform safety guidelines.'),
+          source: 'gemini_ai',
+        };
+      }
+    } catch (geminiErr) {
+      console.warn('[Gemini Moderation Notice]:', geminiErr.response?.data || geminiErr.message);
+    }
+  }
+
+  // Default allowed if no violation caught
+  return { allowed: true, category: 'NONE', reason: '', source: 'heuristic' };
+}
+
+// POST /api/ai/moderate-content
+router.post('/moderate-content', async (req, res) => {
+  try {
+    const { text, context } = req.body;
+    const result = await moderateContent(text, context || 'chat');
+    return res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    console.error('Error in content moderation endpoint:', error);
+    return res.status(500).json({
+      success: false,
+      allowed: true,
+      category: 'NONE',
+      reason: '',
+      message: error.message,
+    });
+  }
+});
+
 module.exports = router;
+module.exports.moderateContent = moderateContent;
+

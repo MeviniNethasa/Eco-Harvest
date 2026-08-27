@@ -2,14 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const Message = require('../models/Message');
-
-// Filter helper for phone numbers / emails / direct off-platform keywords to detect violations
-function checkOffPlatformViolation(text) {
-  const phonePattern = /(?:0|\+94)\s*\d{2}\s*\d{3}\s*\d{4}|\b\d{10}\b/;
-  const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
-  const offPlatformKeywords = /(?:whatsapp|viber|telegram|bank account|direct pay|transfer cash|cash directly|skip.*commission|commercial bank|bank transfer)/i;
-  return phonePattern.test(text) || emailPattern.test(text) || offPlatformKeywords.test(text);
-}
+const { moderateContent } = require('./aiRoutes');
 
 // GET /api/messages/:conversationId (Get all messages for a thread)
 router.get('/:conversationId', async (req, res) => {
@@ -36,7 +29,8 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const hasViolation = checkOffPlatformViolation(text);
+    const modResult = moderateContent ? await moderateContent(text, 'chat') : { allowed: true };
+    const hasViolation = !modResult.allowed;
 
     const message = await Message.create({
       conversationId,
@@ -52,14 +46,17 @@ router.post('/', async (req, res) => {
     });
 
     if (hasViolation) {
-      console.log(`MODERATION ALERT: Flagged message detected from '${senderId}' (Conversation: ${conversationId}) -> Offending text: "${text}"`);
+      console.log(`MODERATION ALERT: Flagged message detected from '${senderId}' (Conversation: ${conversationId}) -> [${modResult.category}] Offending text: "${text}" (${modResult.reason})`);
     } else {
       console.log(`MESSAGE PROCESSED [PASSED]: From '${senderId}' (Conversation: ${conversationId})`);
     }
 
     return res.status(201).json({
       success: true,
-      message: hasViolation ? 'Message blocked by moderation filter' : 'Message sent',
+      allowed: !hasViolation,
+      category: modResult.category || 'NONE',
+      reason: modResult.reason || '',
+      message: hasViolation ? (modResult.reason || 'Message blocked by moderation filter') : 'Message sent',
       data: message,
     });
   } catch (error) {

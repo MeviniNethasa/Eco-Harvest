@@ -48,7 +48,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Asset } from 'expo-asset';
 import { Order, ProductReview, ReviewQualityTag } from '../types';
-import { generateReviewId, saveReview } from '../utils/storage';
+import { checkContentModeration, generateReviewId, saveReview } from '../utils/storage';
 import { aiApi, orderApi } from '../services/api';
 
 // A 1x1 neutral-gray PNG, used only when neither the camera nor the
@@ -475,6 +475,21 @@ export default function ReviewModal({ visible, order, onClose, onSubmitted }: Re
 
     setSubmitting(true);
     try {
+      const trimmedComment = comment.trim();
+      if (trimmedComment) {
+        const modResult = await checkContentModeration(trimmedComment, 'review');
+        if (!modResult.allowed) {
+          Alert.alert(
+            'Review Not Allowed',
+            modResult.reason ||
+              'Your review comment violates platform safety rules (such as phone numbers, emails, or offensive language). Please edit your comment.',
+            [{ text: 'Edit Review' }]
+          );
+          setSubmitting(false);
+          return;
+        }
+      }
+
       const review: ProductReview = {
         id: generateReviewId(),
         orderId: order.id,

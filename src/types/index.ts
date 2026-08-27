@@ -413,6 +413,7 @@ export interface ChatMessage {
   senderRole: 'CUSTOMER' | 'FARMER';
   text: string;
   isBlocked: boolean;
+  blockedReason?: string;
   timestamp: string; // ISO timestamp
 }
 
