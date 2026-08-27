@@ -88,8 +88,10 @@ export default function HelpDeskModal({
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<'TICKETS' | 'NEW' | 'FAQS'>('TICKETS');
   const [tickets, setTickets] = useState<HelpTicket[]>([]);
-  const [selectedTicket, setSelectedTicket] = useState<HelpTicket | null>(null);
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const selectedTicket = tickets.find((t) => t.ticketId === selectedTicketId) || null;
 
   // User identity
   const [userRole, setUserRole] = useState<'CUSTOMER' | 'FARMER'>('CUSTOMER');
@@ -137,16 +139,12 @@ export default function HelpDeskModal({
     try {
       const list = await getUserHelpTickets(userId, userRole);
       setTickets(list);
-      if (selectedTicket) {
-        const refreshed = list.find((t) => t.ticketId === selectedTicket.ticketId);
-        if (refreshed) setSelectedTicket(refreshed);
-      }
     } catch (err) {
       console.warn('Error loading help tickets:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [userId, userRole, selectedTicket]);
+  }, [userId, userRole]);
 
   useEffect(() => {
     if (visible) {
@@ -158,6 +156,11 @@ export default function HelpDeskModal({
       return unsub;
     }
   }, [visible, loadUserContext, loadTickets]);
+
+  const handleBackToList = () => {
+    setSelectedTicketId(null);
+    setActiveTab('TICKETS');
+  };
 
   const handleSubmitTicket = async () => {
     if (!subject.trim()) {
@@ -188,7 +191,7 @@ export default function HelpDeskModal({
       setMessage('');
       setOrderId('');
       setActiveTab('TICKETS');
-      setSelectedTicket(created);
+      setSelectedTicketId(created.ticketId);
       await loadTickets();
     } catch (err: any) {
       Alert.alert('Submission Error', err?.message || 'Could not create ticket. Please try again.');
@@ -209,7 +212,7 @@ export default function HelpDeskModal({
       });
       setReplyText('');
       if (updated) {
-        setSelectedTicket(updated);
+        setTickets((prev) => prev.map((t) => (t.ticketId === updated.ticketId ? updated : t)));
       }
       setTimeout(() => {
         scrollRef.current?.scrollToEnd({ animated: true });
@@ -237,7 +240,9 @@ export default function HelpDeskModal({
               'RESOLVED',
               'Customer/Farmer confirmed issue resolved.'
             );
-            if (updated) setSelectedTicket(updated);
+            if (updated) {
+              setTickets((prev) => prev.map((t) => (t.ticketId === updated.ticketId ? updated : t)));
+            }
             showToast('Ticket marked as resolved. Thank you!', 'success');
           },
         },
@@ -280,13 +285,31 @@ export default function HelpDeskModal({
         {/* Header Bar */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <View style={styles.headerIconCircle}>
-              <Ionicons name="headset" size={20} color="#15803D" />
-            </View>
+            {selectedTicket ? (
+              <Pressable
+                style={styles.headerBackBtn}
+                onPress={handleBackToList}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Back to tickets list"
+              >
+                <Ionicons name="arrow-back" size={22} color="#111827" />
+              </Pressable>
+            ) : (
+              <View style={styles.headerIconCircle}>
+                <Ionicons name="headset" size={20} color="#15803D" />
+              </View>
+            )}
             <View>
-              <Text style={styles.headerTitle}>EcoHarvest Help Desk</Text>
+              <Text style={styles.headerTitle}>
+                {selectedTicket ? `Ticket ${selectedTicket.ticketId}` : 'EcoHarvest Help Desk'}
+              </Text>
               <Text style={styles.headerSubtitle}>
-                {userRole === 'FARMER' ? '🌾 Farmer Support Desk' : '🛒 Customer Care & Disputes'}
+                {selectedTicket
+                  ? selectedTicket.category.replace(/_/g, ' ')
+                  : userRole === 'FARMER'
+                  ? '🌾 Farmer Support Desk'
+                  : '🛒 Customer Care & Disputes'}
               </Text>
             </View>
           </View>
@@ -347,14 +370,16 @@ export default function HelpDeskModal({
           <View style={styles.threadContainer}>
             {/* Thread Top Bar */}
             <View style={styles.threadHeader}>
-              <TouchableOpacity
+              <Pressable
                 style={styles.backBtn}
-                onPress={() => setSelectedTicket(null)}
-                hitSlop={10}
+                onPress={handleBackToList}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Back to All Tickets"
               >
-                <Ionicons name="arrow-back" size={20} color="#111827" />
-                <Text style={styles.backBtnText}>All Tickets</Text>
-              </TouchableOpacity>
+                <Ionicons name="arrow-back" size={18} color="#15803D" />
+                <Text style={styles.backBtnText}>Back to Tickets</Text>
+              </Pressable>
 
               <View style={styles.threadStatusRow}>
                 {(() => {
@@ -493,7 +518,7 @@ export default function HelpDeskModal({
                       <TouchableOpacity
                         key={t.ticketId}
                         style={styles.ticketCard}
-                        onPress={() => setSelectedTicket(t)}
+                        onPress={() => setSelectedTicketId(t.ticketId)}
                         activeOpacity={0.85}
                       >
                         <View style={styles.ticketCardHeader}>
@@ -708,6 +733,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  headerBackBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   headerIconCircle: {
     width: 38,
     height: 38,
@@ -790,12 +823,18 @@ const styles = StyleSheet.create({
   backBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
     gap: 6,
   },
   backBtnText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#111827',
+    color: '#15803D',
   },
   threadStatusRow: {
     flexDirection: 'row',
