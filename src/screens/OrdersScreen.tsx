@@ -14,10 +14,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { FarmGroup, Order, OrderStatus, OrdersStackParamList } from '../types';
+import { CustomerProfile, FarmGroup, Order, OrderStatus, OrdersStackParamList } from '../types';
 import {
   getCustomerOrders,
   getUnreadNotificationCount,
+  getUserProfile,
   subscribeToNotifications,
   subscribeToOrders,
 } from '../utils/storage';
@@ -285,6 +286,7 @@ function NotificationBell({ onPress }: { onPress: () => void }) {
 
 export default function OrdersScreen() {
   const navigation = useNavigation<OrdersNavProp>();
+  const [userProfile, setUserProfile] = useState<CustomerProfile | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [reviewOrder, setReviewOrder] = useState<Order | null>(null);
@@ -292,7 +294,16 @@ export default function OrdersScreen() {
   const [multiFarmerModalOrder, setMultiFarmerModalOrder] = useState<Order | null>(null);
 
   const refreshOrders = useCallback(async () => {
-    const latest = await getCustomerOrders();
+    const profile = await getUserProfile();
+    setUserProfile(profile);
+
+    if (!profile) {
+      setOrders([]);
+      setLoading(false);
+      return;
+    }
+
+    const latest = await getCustomerOrders(profile.id || profile.phoneNumber);
     setOrders(latest);
     setLoading(false);
   }, []);
@@ -369,6 +380,14 @@ export default function OrdersScreen() {
     setNotificationsVisible(false);
   }, []);
 
+  const handleGoToAuth = () => {
+    (navigation as any).navigate('Profile', { screen: 'RegisterCustomer' });
+  };
+
+  const handleGoToMarketplace = () => {
+    (navigation as any).navigate('Marketplace');
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.loadingScreen} edges={['top']}>
@@ -382,21 +401,51 @@ export default function OrdersScreen() {
     );
   }
 
-  if (orders.length === 0) {
+  // 1. Unauthenticated View: User is not logged in yet
+  if (!userProfile) {
     return (
       <SafeAreaView style={styles.emptyStateScreen} edges={['top']}>
         <View style={styles.brandRow}>
           <HeaderBranding />
         </View>
         <View style={styles.emptyState}>
-          <View style={styles.emptyStateBellRow}>
-            <NotificationBell onPress={handleOpenNotifications} />
+          <View style={styles.emptyIconCircle}>
+            <Ionicons name="lock-closed-outline" size={38} color="#15803D" />
           </View>
-          <Ionicons name="receipt-outline" size={48} color={colors.textMuted} />
+          <Text style={styles.emptyStateText}>Sign In to View Orders</Text>
+          <Text style={styles.emptyStateSubtext}>
+            Please sign in or create an EcoHarvest account to view and track your purchase history.
+          </Text>
+          <Pressable style={styles.primaryActionButton} onPress={handleGoToAuth}>
+            <Ionicons name="log-in-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.primaryActionButtonText}>Sign In / Sign Up</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // 2. New / Empty View: Logged in user with 0 past orders
+  if (orders.length === 0) {
+    return (
+      <SafeAreaView style={styles.emptyStateScreen} edges={['top']}>
+        <View style={styles.brandRow}>
+          <HeaderBranding />
+        </View>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Your Orders</Text>
+          <NotificationBell onPress={handleOpenNotifications} />
+        </View>
+        <View style={styles.emptyState}>
+          <Ionicons name="receipt-outline" size={54} color={colors.textMuted} />
           <Text style={styles.emptyStateText}>No orders yet</Text>
           <Text style={styles.emptyStateSubtext}>
-            Orders you place at checkout will show up here.
+            You have not placed any orders yet. Fresh harvests from certified organic farms are ready for delivery!
           </Text>
+          <Pressable style={styles.primaryActionButton} onPress={handleGoToMarketplace}>
+            <Ionicons name="leaf-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.primaryActionButtonText}>Explore Marketplace</Text>
+          </Pressable>
         </View>
 
         <NotificationModal
@@ -408,6 +457,7 @@ export default function OrdersScreen() {
     );
   }
 
+  // 3. Authenticated View: Display strictly this user's past orders
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
       <View style={styles.brandRow}>
@@ -644,22 +694,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 32,
-    gap: 8,
+    gap: 12,
   },
-  emptyStateBellRow: {
-    alignSelf: 'flex-end',
-    marginBottom: 40,
+  emptyIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
   },
   emptyStateText: {
     fontSize: 18,
     fontWeight: '700',
     color: colors.textDark,
-    marginTop: 8,
+    textAlign: 'center',
   },
   emptyStateSubtext: {
     fontSize: 14,
     color: colors.textMuted,
     textAlign: 'center',
+    maxWidth: 300,
+    lineHeight: 20,
+  },
+  primaryActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primaryGreen,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 10,
+    gap: 8,
+    marginTop: 8,
+  },
+  primaryActionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
 
   // Multi-Farmer Selection Modal Styles

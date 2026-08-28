@@ -2056,32 +2056,64 @@ export async function getOrders(): Promise<Order[]> {
 
 /**
  * Clean & strictly filter Customer Order History by the active buyer's session user ID.
- * Prevents customers from seeing random transaction entries from other accounts.
+ * Prevents unauthenticated users and new accounts from seeing random/other transaction entries.
  */
 export async function getCustomerOrders(customerId?: string): Promise<Order[]> {
-  const allOrders = await getOrders();
   let targetId = customerId?.trim().toLowerCase();
+  let userProfile: CustomerProfile | null = null;
 
   if (!targetId) {
-    const profile = await getUserProfile();
-    if (profile) {
-      targetId = (profile.id || profile.phoneNumber || profile.fullName || '').trim().toLowerCase();
+    userProfile = await getUserProfile();
+    if (userProfile) {
+      targetId = (userProfile.id || userProfile.phoneNumber || '').trim().toLowerCase();
     }
   }
 
-  if (!targetId) {
-    return allOrders;
+  // If user is not logged in / signed in, they have no personal order history to display
+  if (!targetId && !userProfile) {
+    return [];
   }
 
-  return allOrders.filter((order) => {
-    const orderCustId = (order.customerId || (order as any).customer || '').trim().toLowerCase();
-    if (!orderCustId) return true; // Include session orders placed without explicit ID
-    return (
-      orderCustId === targetId ||
-      orderCustId.includes(targetId) ||
-      targetId.includes(orderCustId)
-    );
+  const raw = await AsyncStorage.getItem(ORDERS_STORAGE_KEY);
+  const localOrders: Order[] = raw ? (JSON.parse(raw) as Order[]) : [];
+
+  let backendOrders: Order[] = [];
+  try {
+    const lookupId = targetId || userProfile?.id || userProfile?.phoneNumber || '';
+    if (lookupId) {
+      const res = await orderApi.getByCustomer(lookupId);
+      if (res && res.data && Array.isArray(res.data)) {
+        backendOrders = res.data.map(mapBackendOrderToLocal);
+      }
+    }
+  } catch (e) {
+    // Offline / fallback
+  }
+
+  const mergedMap = new Map<string, Order>();
+  backendOrders.forEach((o) => mergedMap.set(o.id, o));
+  localOrders.forEach((o) => {
+    if (!mergedMap.has(o.id)) {
+      mergedMap.set(o.id, o);
+    }
   });
+
+  const allMerged = Array.from(mergedMap.values());
+  const phone = userProfile?.phoneNumber?.trim().toLowerCase();
+  const name = userProfile?.fullName?.trim().toLowerCase();
+
+  return allMerged.filter((order) => {
+    const orderCustId = (order.customerId || (order as any).customer || '').trim().toLowerCase();
+    if (!orderCustId) return false; // Strict privacy: never show orphaned or other accounts' orders
+
+    return (
+      (targetId && (orderCustId === targetId || orderCustId.includes(targetId) || targetId.includes(orderCustId))) ||
+      (phone && orderCustId.includes(phone)) ||
+      (name && orderCustId.includes(name))
+    );
+  }).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
 }
 
 /**
