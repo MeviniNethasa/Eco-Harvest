@@ -6,6 +6,7 @@ const FarmerProfile = require('../models/FarmerProfile');
 const Order = require('../models/Order');
 const Message = require('../models/Message');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 
 // Helper to extract terms causing moderation interception
 function extractViolationTerms(text) {
@@ -117,6 +118,24 @@ router.post('/verifications/:id/approve', async (req, res) => {
       if (farmer.userId) {
         await User.findByIdAndUpdate(farmer.userId, { isSLSIVerified: true });
       }
+
+      // Generate in-app push notification for farmer in MongoDB
+      try {
+        const recipientId = farmer.userId ? farmer.userId.toString() : farmer._id.toString();
+        await Notification.create({
+          recipientId,
+          role: 'FARMER',
+          type: 'RECOMMENDATION',
+          title: 'SLSI Verification Approved! 🎉',
+          body: `Congratulations! Your farm was verified with SLSI Organic Certification. Commission reduced to ${commissionRate}%.`,
+          message: `SLSI Organic Certification verified. Commission reduced to ${commissionRate}%.`,
+          readStatus: false,
+          isRead: false,
+          data: { farmerId: id, status: 'VERIFIED', commissionRate },
+        });
+      } catch (notifErr) {
+        console.warn('Failed to save approval notification in MongoDB:', notifErr.message);
+      }
     }
 
     console.log(`ADMIN AUDIT: Approved verification for farmer ID: ${id} (Commission: ${commissionRate}%)`);
@@ -154,6 +173,24 @@ router.post('/verifications/:id/reject', async (req, res) => {
 
       if (farmer.userId) {
         await User.findByIdAndUpdate(farmer.userId, { isSLSIVerified: false });
+      }
+
+      // Generate in-app push notification for farmer in MongoDB
+      try {
+        const recipientId = farmer.userId ? farmer.userId.toString() : farmer._id.toString();
+        await Notification.create({
+          recipientId,
+          role: 'FARMER',
+          type: 'REVIEW',
+          title: 'SLSI Verification Rejected',
+          body: `Your SLSI organic certification application was rejected. Reason: ${reason}`,
+          message: reason,
+          readStatus: false,
+          isRead: false,
+          data: { farmerId: id, status: 'REJECTED', reason },
+        });
+      } catch (notifErr) {
+        console.warn('Failed to save rejection notification in MongoDB:', notifErr.message);
       }
     }
 

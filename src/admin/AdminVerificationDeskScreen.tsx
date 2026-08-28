@@ -204,7 +204,14 @@ export default function AdminVerificationDeskScreen() {
   // the browser deferred delivering the BroadcastChannel message until it
   // regains focus).
   useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (
+      Platform.OS !== 'web' ||
+      typeof window === 'undefined' ||
+      typeof window.addEventListener !== 'function' ||
+      typeof document === 'undefined'
+    ) {
+      return;
+    }
 
     const handleWindowFocus = () => {
       loadQueue(true);

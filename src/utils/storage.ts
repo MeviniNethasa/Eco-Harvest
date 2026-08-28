@@ -1,6 +1,5 @@
-// src/utils/storage.ts
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import {
   AppMode,
   AppNotification,
@@ -421,7 +420,7 @@ export function subscribeToFarmerProfile(listener: FarmerProfileListener): () =>
   farmerProfileListeners.add(listener);
 
   let crossTabUnsub: (() => void) | null = null;
-  if (typeof window !== 'undefined') {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     const handleStorageEvent = async (event: StorageEvent) => {
       if (event.key === null || event.key === FARMER_PROFILE_STORAGE_KEY) {
         try {
@@ -448,11 +447,17 @@ export function subscribeToFarmerProfile(listener: FarmerProfileListener): () =>
         }
       }
     };
-    channel?.addEventListener('message', handleChannelMessage);
+    if (channel && typeof channel.addEventListener === 'function') {
+      channel.addEventListener('message', handleChannelMessage);
+    }
 
     crossTabUnsub = () => {
-      window.removeEventListener('storage', handleStorageEvent);
-      channel?.removeEventListener('message', handleChannelMessage);
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('storage', handleStorageEvent);
+      }
+      if (channel && typeof channel.removeEventListener === 'function') {
+        channel.removeEventListener('message', handleChannelMessage);
+      }
     };
   }
 
@@ -1251,7 +1256,7 @@ let verificationQueueChannelInitAttempted = false;
 function getVerificationQueueChannel(): BroadcastChannel | null {
   if (verificationQueueChannelInitAttempted) return verificationQueueChannel;
   verificationQueueChannelInitAttempted = true;
-  if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') {
     return null;
   }
   try {
@@ -1293,6 +1298,19 @@ function broadcastFarmerProfileChange(): void {
 }
 
 /**
+ * Pings any other open tab that the notifications list changed.
+ */
+function broadcastNotificationChange(): void {
+  const channel = getVerificationQueueChannel();
+  if (!channel) return;
+  try {
+    channel.postMessage({ type: 'notifications-changed', at: Date.now() });
+  } catch (error) {
+    console.warn('Failed to broadcast notification change:', error);
+  }
+}
+
+/**
  * Subscribe to verification-queue changes made from *another* browser tab —
  * e.g. a farmer submitting from the onboarding tab while the admin has the
  * Verification Desk open in a separate tab. Combines `BroadcastChannel`
@@ -1308,7 +1326,7 @@ function broadcastFarmerProfileChange(): void {
 export function subscribeToVerificationQueueAcrossTabs(
   onRemoteChange: () => void
 ): () => void {
-  if (typeof window === 'undefined') {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
     return () => {};
   }
 
@@ -1318,7 +1336,9 @@ export function subscribeToVerificationQueueAcrossTabs(
       onRemoteChange();
     }
   };
-  channel?.addEventListener('message', handleChannelMessage);
+  if (channel && typeof channel.addEventListener === 'function') {
+    channel.addEventListener('message', handleChannelMessage);
+  }
 
   const handleStorageEvent = (event: StorageEvent) => {
     // `event.key` is `null` when a tab clears storage entirely; otherwise
@@ -1331,8 +1351,12 @@ export function subscribeToVerificationQueueAcrossTabs(
   window.addEventListener('storage', handleStorageEvent);
 
   return () => {
-    channel?.removeEventListener('message', handleChannelMessage);
-    window.removeEventListener('storage', handleStorageEvent);
+    if (channel && typeof channel.removeEventListener === 'function') {
+      channel.removeEventListener('message', handleChannelMessage);
+    }
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('storage', handleStorageEvent);
+    }
   };
 }
 
@@ -1517,6 +1541,7 @@ export async function updateVerificationStatus(
     if (status === 'VERIFIED') {
       await addNotification({
         role: 'FARMER',
+        recipientId: farmerId,
         category: 'RECOMMENDATION',
         title: 'SLSI Verification Approved! 🎉',
         message: `Congratulations! Your farm was verified with SLSI Organic Certification. Commission reduced to ${commissionRate}%.`,
@@ -1526,6 +1551,7 @@ export async function updateVerificationStatus(
       const reasonText = rejectionReason || 'Certificate document failed SLSI organic standard audit';
       await addNotification({
         role: 'FARMER',
+        recipientId: farmerId,
         category: 'REVIEW',
         title: 'SLSI Verification Rejected',
         message: reasonText,
@@ -3409,16 +3435,57 @@ function notifyNotificationListeners(notifications: AppNotification[]): void {
 /**
  * Subscribe to real-time notification updates across both viewport
  * channels. Returns an unsubscribe function.
- *
- * Typical usage in a header Bell icon:
- *
- *   useEffect(() => subscribeToNotifications((all) => {
- *     setUnreadCount(all.filter((n) => n.role === 'CUSTOMER' && !n.isRead).length);
- *   }), []);
  */
 export function subscribeToNotifications(listener: NotificationListener): () => void {
   notificationListeners.add(listener);
-  return () => notificationListeners.delete(listener);
+
+  let crossTabUnsub: (() => void) | null = null;
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    const handleStorageEvent = async (event: StorageEvent) => {
+      if (event.key === null || event.key === NOTIFICATIONS_STORAGE_KEY) {
+        try {
+          const fresh = await getAllNotifications();
+          listener(fresh);
+        } catch (e) {
+          console.warn('Error fetching fresh notifications on storage event:', e);
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageEvent);
+
+    const channel = getVerificationQueueChannel();
+    const handleChannelMessage = async (event: MessageEvent) => {
+      if (
+        event?.data?.type === 'notifications-changed' ||
+        event?.data?.type === 'farmer-profile-changed' ||
+        event?.data?.type === 'verification-queue-changed'
+      ) {
+        try {
+          const fresh = await getAllNotifications();
+          listener(fresh);
+        } catch (e) {
+          console.warn('Error fetching fresh notifications on broadcast message:', e);
+        }
+      }
+    };
+    if (channel && typeof channel.addEventListener === 'function') {
+      channel.addEventListener('message', handleChannelMessage);
+    }
+
+    crossTabUnsub = () => {
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('storage', handleStorageEvent);
+      }
+      if (channel && typeof channel.removeEventListener === 'function') {
+        channel.removeEventListener('message', handleChannelMessage);
+      }
+    };
+  }
+
+  return () => {
+    notificationListeners.delete(listener);
+    if (crossTabUnsub) crossTabUnsub();
+  };
 }
 
 /**
@@ -3488,9 +3555,16 @@ async function getAllNotifications(): Promise<AppNotification[]> {
  * a failed write never leaves the UI believing a mark-as-read/simulated
  * push actually landed.
  */
+/**
+ * Persist the full notifications array and notify all live subscribers.
+ * Throws on failure — same convention as `saveCrops`/`saveOrders` above, so
+ * a failed write never leaves the UI believing a mark-as-read/simulated
+ * push actually landed.
+ */
 async function saveAllNotifications(notifications: AppNotification[]): Promise<void> {
   await AsyncStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(notifications));
   notifyNotificationListeners(notifications);
+  broadcastNotificationChange();
 }
 
 /**
@@ -3556,7 +3630,7 @@ export async function markAllNotificationsAsRead(
  * a fresh timestamp — callers only supply the content fields.
  */
 export async function addNotification(
-  notification: Omit<AppNotification, 'id' | 'isRead' | 'timestamp'>
+  notification: Omit<AppNotification, 'id' | 'isRead' | 'timestamp'> & { recipientId?: string }
 ): Promise<AppNotification[]> {
   const all = await getAllNotifications();
   const newNotification: AppNotification = {
@@ -3567,6 +3641,29 @@ export async function addNotification(
   };
   const updated = [newNotification, ...all];
   await saveAllNotifications(updated);
+
+  // Sync to backend MongoDB API
+  try {
+    const farmer = await getFarmerProfile();
+    const customer = await getUserProfile();
+    const recipientId =
+      notification.recipientId ||
+      (notification.role === 'FARMER' ? farmer?.id || 'ALL_FARMERS' : customer?.id || 'ALL_CUSTOMERS');
+
+    notificationApi
+      .createNotification({
+        recipientId,
+        role: notification.role,
+        type: notification.category,
+        title: notification.title,
+        message: notification.message || notification.body,
+        body: notification.body || notification.message,
+      })
+      .catch((e) => console.log('Notification API sync notice:', e.message));
+  } catch (err) {
+    // Offline fallback
+  }
+
   return updated;
 }
 
