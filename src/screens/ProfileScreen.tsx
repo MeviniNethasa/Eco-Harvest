@@ -19,6 +19,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import type { ProfileStackParamList } from '../navigation/TabNavigator';
 import type { AppMode, CustomerProfile, FarmerProfile, SubscriptionPlan, VerificationStatus } from '../types';
+import * as ImagePicker from 'expo-image-picker';
 import {
   clearFarmerProfile,
   clearUserProfile,
@@ -33,7 +34,9 @@ import {
   saveUserProfile,
   setActiveMode,
   subscribeToActiveMode,
+  subscribeToFarmerProfile,
   subscribeToUserProfile,
+  syncFarmerProfileToVerificationQueue,
 } from '../utils/storage';
 import { PROVINCES, getDistricts, getCities } from '../data/sriLankaLocations';
 import StandardHeader from '../components/StandardHeader';
@@ -238,6 +241,10 @@ export default function ProfileScreen() {
   const [accountNumber, setAccountNumber] = useState('');
   const [accountHolderName, setAccountHolderName] = useState('');
   const [farmCoverPhotoUrl, setFarmCoverPhotoUrl] = useState('');
+  const [slsiCertificateUri, setSlsiCertificateUri] = useState<string | null>(null);
+  const [farmerVerificationStatus, setFarmerVerificationStatus] = useState<VerificationStatus>('UNVERIFIED');
+  const [farmerRejectionReason, setFarmerRejectionReason] = useState<string | undefined>(undefined);
+  const [isReSubmittingSLSI, setIsReSubmittingSLSI] = useState(false);
   const [farmerErrors, setFarmerErrors] = useState<Record<string, string>>({});
   const [isSavingFarmer, setIsSavingFarmer] = useState(false);
   const [farmerFreshness, setFarmerFreshness] = useState<FarmerFreshnessScore | null>(null);
@@ -326,9 +333,13 @@ export default function ProfileScreen() {
     const unsubUser = subscribeToUserProfile((updated) => {
       setCustomerProfile(updated);
     });
+    const unsubFarmer = subscribeToFarmerProfile((updated) => {
+      setFarmerProfile(updated);
+    });
     return () => {
       unsubMode();
       unsubUser();
+      unsubFarmer();
     };
   }, []);
 
@@ -496,8 +507,49 @@ export default function ProfileScreen() {
     setAccountNumber(farmerProfile.bankDetails?.accountNumber ?? '');
     setAccountHolderName(farmerProfile.bankDetails?.accountHolderName ?? '');
     setFarmCoverPhotoUrl(farmerProfile.farmCoverPhotoUrl ?? '');
+    setSlsiCertificateUri(farmerProfile.slsiCertificateUri ?? null);
+    setFarmerVerificationStatus(farmerProfile.verificationStatus ?? 'UNVERIFIED');
+    setFarmerRejectionReason(farmerProfile.rejectionReason);
+    setIsReSubmittingSLSI(false);
     setFarmerErrors({});
     setIsFarmerEditModalVisible(true);
+  };
+
+  const handlePickSLSICertificate = async () => {
+    try {
+      const current = await ImagePicker.getMediaLibraryPermissionsAsync();
+      let granted = current.granted;
+      if (!granted && current.canAskAgain) {
+        const requested = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        granted = requested.granted;
+      }
+      if (!granted) {
+        Alert.alert('Permission needed', 'Please allow access to your photo library in Settings to upload an image.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.7,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets?.length) {
+        const asset = result.assets[0];
+        const uri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        setSlsiCertificateUri(uri);
+        setFarmerVerificationStatus('PENDING_VERIFICATION');
+        setIsReSubmittingSLSI(true);
+      }
+    } catch (err) {
+      console.error('Failed to pick SLSI certificate image:', err);
+      Alert.alert('Error', 'Could not open photo library.');
+    }
+  };
+
+  const handleReSubmitSLSI = () => {
+    setFarmerVerificationStatus('PENDING_VERIFICATION');
+    setIsReSubmittingSLSI(true);
   };
 
   const validateFarmerEditForm = (): boolean => {
@@ -514,6 +566,7 @@ export default function ProfileScreen() {
     if (!validateFarmerEditForm() || !farmerProfile) return;
     setIsSavingFarmer(true);
     try {
+      const nextStatus = isReSubmittingSLSI ? 'PENDING_VERIFICATION' : farmerVerificationStatus;
       const updated: FarmerProfile = {
         ...farmerProfile,
         legalName: farmerLegalName.trim(),
@@ -523,6 +576,10 @@ export default function ProfileScreen() {
         district: farmerDistrict as string,
         city: farmerCity as string,
         farmCoverPhotoUrl: farmCoverPhotoUrl.trim() || undefined,
+        slsiCertificateUri: slsiCertificateUri || null,
+        verificationStatus: nextStatus,
+        isSLSIVerified: nextStatus === 'VERIFIED',
+        rejectionReason: nextStatus === 'PENDING_VERIFICATION' ? undefined : farmerRejectionReason,
         bankDetails: {
           bankName: bankName.trim(),
           branchCode: branchCode.trim(),
@@ -533,6 +590,9 @@ export default function ProfileScreen() {
 
       const saved = await saveFarmerProfile(updated);
       setFarmerProfile(saved);
+      if (nextStatus === 'PENDING_VERIFICATION') {
+        await syncFarmerProfileToVerificationQueue(saved);
+      }
       setIsFarmerEditModalVisible(false);
 
       // Async sync to backend API
@@ -547,13 +607,21 @@ export default function ProfileScreen() {
           city: saved.city,
           bankDetails: saved.bankDetails,
           farmCoverPhotoUrl: saved.farmCoverPhotoUrl,
+          slsiCertificateUrl: saved.slsiCertificateUri || '',
+          slsiStatus: saved.verificationStatus,
+          isSLSIVerified: saved.isSLSIVerified,
         })
         .catch((err) => console.log('Farmer backend sync notice:', err.message));
 
-      Alert.alert('Farm Profile Updated', 'Your farm details have been successfully updated.');
+      Alert.alert(
+        'Farm Profile Updated',
+        nextStatus === 'PENDING_VERIFICATION'
+          ? 'Your farm details and SLSI certificate have been re-submitted for administrator review.'
+          : 'Your farm details have been successfully updated.'
+      );
     } catch (err) {
       console.error('Failed to update farm profile:', err);
-      Alert.alert('Something went wrong', 'Could not save farm details.');
+      Alert.alert('Save Failed', 'Could not update farm profile.');
     } finally {
       setIsSavingFarmer(false);
     }
@@ -1359,6 +1427,81 @@ export default function ProfileScreen() {
                 onSelect={(val) => setFarmerCity(val)}
               />
 
+              {/* ---------------- SLSI Certification Edit & Re-upload ---------------- */}
+              <View style={styles.slsiEditCard}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <Text style={[styles.label, { marginBottom: 0, fontWeight: '700' }]}>
+                    SLSI Organic Certification
+                  </Text>
+                  {farmerVerificationStatus && (
+                    <View
+                      style={[
+                        styles.slsiStatusPill,
+                        { backgroundColor: VERIFICATION_BADGE_CONFIG[farmerVerificationStatus].bg },
+                      ]}
+                    >
+                      <Ionicons
+                        name={VERIFICATION_BADGE_CONFIG[farmerVerificationStatus].icon}
+                        size={12}
+                        color={VERIFICATION_BADGE_CONFIG[farmerVerificationStatus].fg}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text
+                        style={[
+                          styles.slsiStatusPillText,
+                          { color: VERIFICATION_BADGE_CONFIG[farmerVerificationStatus].fg },
+                        ]}
+                      >
+                        {VERIFICATION_BADGE_CONFIG[farmerVerificationStatus].label}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {farmerVerificationStatus === 'REJECTED' && (
+                  <View style={styles.rejectionNoticeCard}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <Ionicons name="alert-circle" size={16} color={tokens.colorAlertCrimson} />
+                      <Text style={styles.rejectionNoticeTitle}>Certification Rejected by Administrator</Text>
+                    </View>
+                    {!!farmerRejectionReason && (
+                      <Text style={styles.rejectionNoticeReason}>Reason: {farmerRejectionReason}</Text>
+                    )}
+                    <Text style={styles.rejectionNoticeHelp}>
+                      Please update or re-upload a compliant certificate document and save your profile to re-submit for admin audit.
+                    </Text>
+                  </View>
+                )}
+
+                <Text style={styles.slsiDocSummary}>
+                  {slsiCertificateUri
+                    ? `Current document: ${slsiCertificateUri.startsWith('data:') ? 'Image uploaded' : slsiCertificateUri.slice(0, 40) + '...'}`
+                    : 'No certificate document on file.'}
+                </Text>
+
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                  <Pressable
+                    style={[styles.secondaryButton, styles.flexOne, { minHeight: 38, paddingVertical: 8 }]}
+                    onPress={handlePickSLSICertificate}
+                  >
+                    <Ionicons name="cloud-upload-outline" size={16} color={tokens.colorPrimaryGreen} style={{ marginRight: 6 }} />
+                    <Text style={styles.secondaryButtonText}>
+                      {slsiCertificateUri ? 'Replace Certificate' : 'Upload Certificate'}
+                    </Text>
+                  </Pressable>
+
+                  {(farmerVerificationStatus === 'REJECTED' || farmerVerificationStatus === 'UNVERIFIED') && slsiCertificateUri && !isReSubmittingSLSI && (
+                    <Pressable
+                      style={[styles.reSubmitBtn, styles.flexOne]}
+                      onPress={handleReSubmitSLSI}
+                    >
+                      <Ionicons name="refresh" size={14} color="#15803D" style={{ marginRight: 4 }} />
+                      <Text style={styles.reSubmitBtnText}>Re-submit for Review</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </View>
+
               <Text style={[styles.label, { marginTop: 12, fontWeight: '700' }]}>
                 Bank Account Details (Payouts)
               </Text>
@@ -1985,5 +2128,72 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: tokens.colorTextMuted,
     marginTop: 2,
+  },
+  slsiEditCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: tokens.colorBorderGray,
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  slsiStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  slsiStatusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  slsiDocSummary: {
+    fontSize: 12,
+    color: tokens.colorTextMuted,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  reSubmitBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    minHeight: 38,
+  },
+  reSubmitBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  rejectionNoticeCard: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  rejectionNoticeTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: tokens.colorAlertCrimson,
+  },
+  rejectionNoticeReason: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#991B1B',
+    marginBottom: 2,
+  },
+  rejectionNoticeHelp: {
+    fontSize: 10,
+    color: tokens.colorTextMuted,
+    lineHeight: 14,
   },
 });

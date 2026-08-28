@@ -28,6 +28,7 @@ import {
   getOrdersByFarmerId,
   getProductsByFarmerId,
   subscribeToCrops,
+  subscribeToFarmerProfile,
   subscribeToOrders,
 } from '../utils/storage';
 import { aiApi } from '../services/api';
@@ -137,6 +138,18 @@ export default function FarmerDashboardScreen() {
   );
 
   useEffect(() => {
+    const unsubFarmer = subscribeToFarmerProfile((updated) => {
+      setProfile(updated);
+      if (updated?.id) {
+        Promise.all([
+          getProductsByFarmerId(updated.id),
+          getOrdersByFarmerId(updated.id),
+        ]).then(([prods, ords]) => {
+          setProducts(prods);
+          setOrders(ords);
+        });
+      }
+    });
     const unsubCrops = subscribeToCrops(() => {
       if (profile?.id) getProductsByFarmerId(profile.id).then(setProducts);
     });
@@ -144,6 +157,7 @@ export default function FarmerDashboardScreen() {
       if (profile?.id) getOrdersByFarmerId(profile.id).then(setOrders);
     });
     return () => {
+      unsubFarmer();
       unsubCrops();
       unsubOrders();
     };

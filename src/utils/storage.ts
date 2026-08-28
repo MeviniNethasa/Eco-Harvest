@@ -396,6 +396,73 @@ export async function getFarmerProfile(): Promise<FarmerProfile | null> {
 }
 
 /**
+ * Pub/sub for real-time single active farmer profile changes so Farmer Dashboard,
+ * Farmer Onboarding, ProfileScreen, and any mounted consumer update immediately
+ * when an administrator or local action modifies the farmer's status or details.
+ */
+export type FarmerProfileListener = (profile: FarmerProfile | null) => void;
+const farmerProfileListeners = new Set<FarmerProfileListener>();
+
+export function notifyFarmerProfileListeners(profile: FarmerProfile | null): void {
+  farmerProfileListeners.forEach((listener) => {
+    try {
+      listener(profile);
+    } catch (err) {
+      console.error('Error in farmer profile listener:', err);
+    }
+  });
+}
+
+/**
+ * Subscribe to real-time farmer profile changes (in-memory + cross-tab synchronization).
+ * Returns an unsubscribe function.
+ */
+export function subscribeToFarmerProfile(listener: FarmerProfileListener): () => void {
+  farmerProfileListeners.add(listener);
+
+  let crossTabUnsub: (() => void) | null = null;
+  if (typeof window !== 'undefined') {
+    const handleStorageEvent = async (event: StorageEvent) => {
+      if (event.key === null || event.key === FARMER_PROFILE_STORAGE_KEY) {
+        try {
+          const fresh = await getFarmerProfile();
+          listener(fresh);
+        } catch (e) {
+          console.warn('Error fetching fresh farmer profile on storage event:', e);
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageEvent);
+
+    const channel = getVerificationQueueChannel();
+    const handleChannelMessage = async (event: MessageEvent) => {
+      if (
+        event?.data?.type === 'farmer-profile-changed' ||
+        event?.data?.type === 'verification-queue-changed'
+      ) {
+        try {
+          const fresh = await getFarmerProfile();
+          listener(fresh);
+        } catch (e) {
+          console.warn('Error fetching fresh farmer profile on broadcast message:', e);
+        }
+      }
+    };
+    channel?.addEventListener('message', handleChannelMessage);
+
+    crossTabUnsub = () => {
+      window.removeEventListener('storage', handleStorageEvent);
+      channel?.removeEventListener('message', handleChannelMessage);
+    };
+  }
+
+  return () => {
+    farmerProfileListeners.delete(listener);
+    if (crossTabUnsub) crossTabUnsub();
+  };
+}
+
+/**
  * Persist the farmer profile (creation on first-time onboarding, or an
  * update via "Edit Profile Details"). Always re-derives `isSLSIVerified`
  * from `verificationStatus` before saving, so the two fields can never end
@@ -410,6 +477,8 @@ export async function saveFarmerProfile(profile: FarmerProfile): Promise<FarmerP
     isSLSIVerified: profile.verificationStatus === 'VERIFIED',
   };
   await AsyncStorage.setItem(FARMER_PROFILE_STORAGE_KEY, JSON.stringify(normalized));
+  notifyFarmerProfileListeners(normalized);
+  broadcastFarmerProfileChange();
 
   // Persist to all registered farms catalog so any customer or session can see this farm
   try {
@@ -453,6 +522,8 @@ export async function hasCompletedFarmerOnboarding(): Promise<boolean> {
  */
 export async function clearFarmerProfile(): Promise<void> {
   await AsyncStorage.removeItem(FARMER_PROFILE_STORAGE_KEY);
+  notifyFarmerProfileListeners(null);
+  broadcastFarmerProfileChange();
 }
 
 // ---------------------------------------------------------------------------
@@ -1209,6 +1280,19 @@ function broadcastVerificationQueueChange(): void {
 }
 
 /**
+ * Pings any other open tab that the active farmer profile changed.
+ */
+function broadcastFarmerProfileChange(): void {
+  const channel = getVerificationQueueChannel();
+  if (!channel) return;
+  try {
+    channel.postMessage({ type: 'farmer-profile-changed', at: Date.now() });
+  } catch (error) {
+    console.warn('Failed to broadcast farmer profile change:', error);
+  }
+}
+
+/**
  * Subscribe to verification-queue changes made from *another* browser tab —
  * e.g. a farmer submitting from the onboarding tab while the admin has the
  * Verification Desk open in a separate tab. Combines `BroadcastChannel`
@@ -1354,40 +1438,102 @@ export async function syncFarmerProfileToVerificationQueue(
  * profile too, so `FarmerOnboardingScreen` picks up the new badge and
  * commission tier "immediately... upon next focus/render" without the two
  * screens needing any other shared state.
- *
- * Throws if `farmerId` isn't currently in the queue — callers (e.g. the
- * admin desk's Approve/Reject buttons) should only ever call this for a
- * request they already loaded from `getVerificationRequests` /
- * `upsertVerificationRequest`.
  */
 export async function updateVerificationStatus(
   farmerId: string,
   status: 'VERIFIED' | 'REJECTED',
-  commissionRate: number
+  commissionRate: number,
+  rejectionReason?: string
 ): Promise<VerificationRequest[]> {
   const all = await getVerificationRequests();
-  const index = all.findIndex((r) => r.farmerId === farmerId);
-  if (index === -1) {
-    throw new Error(
-      `updateVerificationStatus: no verification request found for farmerId "${farmerId}".`
-    );
-  }
-
-  const updatedRequests = all.map((r, i) =>
-    i === index ? { ...r, verificationStatus: status, commissionRate } : r
+  const index = all.findIndex(
+    (r) => r.farmerId === farmerId || (farmerId && r.farmerId && r.farmerId.includes(farmerId))
   );
-  await saveVerificationRequests(updatedRequests);
+
+  let targetRequest: VerificationRequest | null = null;
+  let updatedRequests = all;
+  if (index !== -1) {
+    targetRequest = all[index];
+    updatedRequests = all.map((r, i) =>
+      i === index
+        ? {
+            ...r,
+            verificationStatus: status,
+            commissionRate,
+            rejectionReason: status === 'REJECTED' ? rejectionReason : undefined,
+          }
+        : r
+    );
+    await saveVerificationRequests(updatedRequests);
+  }
 
   // Farmer Portal Sync: mirror the decision onto the on-device profile if
   // it belongs to the same farmer.
   const farmerProfile = await getFarmerProfile();
-  if (farmerProfile && farmerProfile.id === farmerId) {
+  const isMatchingFarmer =
+    farmerProfile &&
+    (farmerProfile.id === farmerId ||
+      (targetRequest && farmerProfile.mobileNumber && targetRequest.mobileNumber === farmerProfile.mobileNumber) ||
+      (targetRequest && farmerProfile.farmName && targetRequest.legalName && farmerProfile.farmName === targetRequest.legalName));
+
+  if (farmerProfile && isMatchingFarmer) {
     await saveFarmerProfile({
       ...farmerProfile,
       verificationStatus: status,
       isSLSIVerified: status === 'VERIFIED',
       commissionRate,
+      rejectionReason: status === 'REJECTED' ? rejectionReason : undefined,
     });
+  } else {
+    // Also update in registered farmers catalog if present
+    try {
+      const rawRegistered = await AsyncStorage.getItem(REGISTERED_FARMERS_STORAGE_KEY);
+      if (rawRegistered) {
+        const existing: FarmerProfile[] = JSON.parse(rawRegistered);
+        const fIdx = existing.findIndex(
+          (f) =>
+            f.id === farmerId ||
+            (targetRequest && f.mobileNumber && f.mobileNumber === targetRequest.mobileNumber)
+        );
+        if (fIdx >= 0) {
+          existing[fIdx] = {
+            ...existing[fIdx],
+            verificationStatus: status,
+            isSLSIVerified: status === 'VERIFIED',
+            commissionRate,
+            rejectionReason: status === 'REJECTED' ? rejectionReason : undefined,
+          };
+          await AsyncStorage.setItem(REGISTERED_FARMERS_STORAGE_KEY, JSON.stringify(existing));
+          notifyFarmerListeners(existing);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to update registered farmers catalog on verification status change:', e);
+    }
+  }
+
+  // Send an immediate push notification to the farmer
+  try {
+    if (status === 'VERIFIED') {
+      await addNotification({
+        role: 'FARMER',
+        category: 'RECOMMENDATION',
+        title: 'SLSI Verification Approved! 🎉',
+        message: `Congratulations! Your farm was verified with SLSI Organic Certification. Commission reduced to ${commissionRate}%.`,
+        body: `Congratulations! Your farm was verified with SLSI Organic Certification. Commission reduced to ${commissionRate}%.`,
+      });
+    } else if (status === 'REJECTED') {
+      const reasonText = rejectionReason || 'Certificate document failed SLSI organic standard audit';
+      await addNotification({
+        role: 'FARMER',
+        category: 'REVIEW',
+        title: 'SLSI Verification Rejected',
+        message: reasonText,
+        body: `Your SLSI organic certification application was rejected. Reason: ${reasonText}`,
+      });
+    }
+  } catch (notifErr) {
+    console.warn('Failed to add notification for verification outcome:', notifErr);
   }
 
   return updatedRequests;
@@ -1410,9 +1556,10 @@ export async function approveVerificationRequest(
  * resolves to `REJECTED` at the default 5% commission tier.
  */
 export async function rejectVerificationRequest(
-  farmerId: string
+  farmerId: string,
+  rejectionReason?: string
 ): Promise<VerificationRequest[]> {
-  return updateVerificationStatus(farmerId, 'REJECTED', COMMISSION_RATE_DEFAULT);
+  return updateVerificationStatus(farmerId, 'REJECTED', COMMISSION_RATE_DEFAULT, rejectionReason);
 }
 
 /**

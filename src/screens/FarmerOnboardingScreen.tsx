@@ -42,6 +42,7 @@ import {
   publishCrop,
   saveFarmerProfile,
   setActiveMode,
+  subscribeToFarmerProfile,
   subscribeToNotifications,
   syncFarmerProfileToVerificationQueue,
 } from '../utils/storage';
@@ -325,7 +326,22 @@ export default function FarmerOnboardingScreen() {
 
   useEffect(() => {
     loadProfile();
-  }, [loadProfile]);
+    const unsubFarmer = subscribeToFarmerProfile((updated) => {
+      if (!isEditingProfile) {
+        setProfile(updated);
+        if (updated) {
+          setVerificationStatus(updated.verificationStatus);
+          setCommissionRate(updated.commissionRate ?? DEFAULT_COMMISSION_RATE);
+          if (updated.slsiCertificateUri) {
+            setCertificateUri(updated.slsiCertificateUri);
+          }
+        }
+      }
+    });
+    return () => {
+      unsubFarmer();
+    };
+  }, [loadProfile, isEditingProfile]);
 
   // Re-fetch whenever the Farmer Portal regains focus so a verification
   // decision made on Screen A-01 (Admin Verification Desk) — a VERIFIED /
@@ -1206,6 +1222,23 @@ export default function FarmerOnboardingScreen() {
                 Upload SLSI Organic Certificate for Verified Farmer Status
               </Text>
 
+              {verificationStatus === 'REJECTED' && (
+                <View style={styles.rejectionNoticeCard}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <Ionicons name="alert-circle" size={18} color={tokens.colorAlertCrimson} />
+                    <Text style={styles.rejectionNoticeTitle}>Application Rejected by Admin</Text>
+                  </View>
+                  {!!profile?.rejectionReason && (
+                    <Text style={styles.rejectionNoticeReason}>
+                      Reason: {profile.rejectionReason}
+                    </Text>
+                  )}
+                  <Text style={styles.rejectionNoticeHelp}>
+                    Upload a new compliant SLSI organic certificate below to re-submit your application for admin review.
+                  </Text>
+                </View>
+              )}
+
               <Pressable style={styles.secondaryButton} onPress={handleUploadCertificate}>
                 <Text style={styles.secondaryButtonText}>
                   {certificateUri ? 'Replace SLSI Certificate' : 'Upload SLSI Certificate'}
@@ -1327,45 +1360,6 @@ export default function FarmerOnboardingScreen() {
           </>
         )}
       </ScrollView>
-
-      {/* ---------------- Developer Sandbox Toolbar ---------------- */}
-      <View style={styles.devToolbar}>
-        <Text style={styles.devToolbarCaption}>DEV SANDBOX — SLSI STATUS</Text>
-        <View style={styles.devToolbarRow}>
-          <Pressable
-            style={styles.devButton}
-            onPress={() => applyDevVerificationStatus('UNVERIFIED')}
-          >
-            <Text style={styles.devButtonText}>Set Unverified</Text>
-          </Pressable>
-          <Pressable
-            style={styles.devButton}
-            onPress={() => applyDevVerificationStatus('PENDING_VERIFICATION')}
-          >
-            <Text style={styles.devButtonText}>Set Pending</Text>
-          </Pressable>
-          <Pressable
-            style={styles.devButton}
-            onPress={() => applyDevVerificationStatus('VERIFIED')}
-          >
-            <Text style={styles.devButtonText}>Set Verified</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.devButton, styles.devButtonDanger]}
-            onPress={() => applyDevVerificationStatus('REJECTED')}
-          >
-            <Text style={[styles.devButtonText, styles.devButtonDangerText]}>Set Rejected</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.devButton, styles.devButtonDanger]}
-            onPress={handleResetOnboarding}
-          >
-            <Text style={[styles.devButtonText, styles.devButtonDangerText]}>
-              Reset Onboarding
-            </Text>
-          </Pressable>
-        </View>
-      </View>
 
       {/* Interactive Map Pin Location Picker */}
       <MapLocationPickerModal
@@ -1871,5 +1865,29 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: tokens.colorTextMuted,
     marginTop: 2,
+  },
+  rejectionNoticeCard: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  rejectionNoticeTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: tokens.colorAlertCrimson,
+  },
+  rejectionNoticeReason: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#991B1B',
+    marginBottom: 4,
+  },
+  rejectionNoticeHelp: {
+    fontSize: 11,
+    color: tokens.colorTextMuted,
+    lineHeight: 16,
   },
 });

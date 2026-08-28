@@ -83,6 +83,10 @@ const FarmerProfileSchema = new mongoose.Schema(
       type: Number,
       default: 5.0,
     },
+    rejectionReason: {
+      type: String,
+      default: '',
+    },
   },
   {
     timestamps: true,

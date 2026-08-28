@@ -128,6 +128,9 @@ router.post('/profile', async (req, res) => {
       farmer.farmName = farmName;
       farmer.description = description !== undefined ? description : farmer.description;
       farmer.slsiStatus = slsiStatus || farmer.slsiStatus;
+      if (slsiStatus === 'PENDING_VERIFICATION' || slsiStatus === 'PENDING') {
+        farmer.rejectionReason = '';
+      }
       farmer.isSLSIVerified = isSLSIVerified !== undefined ? isSLSIVerified : farmer.isSLSIVerified;
       farmer.bankDetails = bankDetails || farmer.bankDetails;
       farmer.location = loc;

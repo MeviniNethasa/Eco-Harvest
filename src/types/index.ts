@@ -101,6 +101,7 @@ export interface FarmerProfile {
   verificationStatus: VerificationStatus;
   isSLSIVerified: boolean;
   commissionRate?: number;
+  rejectionReason?: string;
   // ---- Farmer-First public profile fields (farm profile page header) ----
   // Hero/banner image for the farm's public profile page. Optional because
   // on-device profiles created before this field existed (and any farmer
@@ -566,6 +567,7 @@ export interface VerificationRequest {
   slsiCertificateUrl: string;
   verificationStatus: AdminVerificationStatus;
   commissionRate: number; // 5 while PENDING/REJECTED, 2.5 once VERIFIED
+  rejectionReason?: string;
   submittedAt: string; // ISO timestamp
 }
 

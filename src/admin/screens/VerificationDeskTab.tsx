@@ -1,23 +1,20 @@
-// src/admin/screens/VerificationDeskTab.tsx
-//
-// Screen A-01: Verification Request Desk (SLSI Certificate Audit)
-// Split-screen 600px/600px layout with interactive Document Inspector,
-// Merchant Profile Data Sheet, and Sticky Approval/Rejection Override Bar.
-
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AdminTheme } from '../AdminTheme';
 import { adminApi } from '../../services/api';
+import { updateVerificationStatus } from '../../utils/storage';
 
 interface VerificationItem {
   id: string;
@@ -45,6 +42,7 @@ interface VerificationItem {
   };
   verificationStatus: 'PENDING' | 'VERIFIED' | 'REJECTED';
   commissionRate: number;
+  rejectionReason?: string;
   submittedAt: string;
 }
 
@@ -58,6 +56,11 @@ export default function VerificationDeskTab() {
   const [zoomLevel, setZoomLevel] = useState(1.0);
   const [rotationDegrees, setRotationDegrees] = useState(0);
   const [commissionRate, setCommissionRate] = useState(2.5);
+
+  // Rejection Reason Modal State
+  const [isRejectModalVisible, setIsRejectModalVisible] = useState(false);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState('');
+  const [rejectError, setRejectError] = useState('');
 
   const loadData = async () => {
     try {
@@ -107,6 +110,11 @@ export default function VerificationDeskTab() {
     try {
       setIsSubmitting(true);
       await adminApi.approveVerification(currentItem.id, commissionRate);
+      await updateVerificationStatus(
+        currentItem.farmerId || currentItem.id,
+        'VERIFIED',
+        commissionRate
+      );
       Alert.alert(
         'Application Approved',
         `SLSI status for ${currentItem.farmName} set to VERIFIED at ${commissionRate}% commission.`
@@ -125,25 +133,41 @@ export default function VerificationDeskTab() {
     }
   };
 
-  const handleReject = async () => {
+  const openRejectModal = () => {
     if (!currentItem) return;
+    setRejectionReasonInput('');
+    setRejectError('');
+    setIsRejectModalVisible(true);
+  };
+
+  const handleConfirmReject = async () => {
+    if (!currentItem) return;
+    const reason = rejectionReasonInput.trim();
+    if (!reason) {
+      setRejectError('Please enter a specific rejection reason for the farmer.');
+      return;
+    }
     try {
       setIsSubmitting(true);
-      await adminApi.rejectVerification(
-        currentItem.id,
-        'Certificate failed SLSI Organic Compliance audit.'
+      await adminApi.rejectVerification(currentItem.id, reason);
+      await updateVerificationStatus(
+        currentItem.farmerId || currentItem.id,
+        'REJECTED',
+        5.0,
+        reason
       );
       Alert.alert(
         'Application Rejected',
-        `SLSI status for ${currentItem.farmName} set to REJECTED. Standard 5.0% commission applied.`
+        `SLSI status for ${currentItem.farmName} set to REJECTED. Standard 5.0% commission applied and immediate notification sent.`
       );
       setQueue((prev) =>
         prev.map((it) =>
           it.id === currentItem.id
-            ? { ...it, verificationStatus: 'REJECTED', commissionRate: 5.0 }
+            ? { ...it, verificationStatus: 'REJECTED', commissionRate: 5.0, rejectionReason: reason }
             : it
         )
       );
+      setIsRejectModalVisible(false);
     } catch (err: any) {
       Alert.alert('Action Failed', err?.message || 'Could not reject application.');
     } finally {
@@ -427,8 +451,8 @@ export default function VerificationDeskTab() {
 
         <View style={styles.footerActions}>
           <Pressable
-            style={[styles.actionBtn, styles.rejectBtn]}
-            onPress={handleReject}
+            style={[styles.actionBtn, styles.rejectBtn, isSubmitting && { opacity: 0.6 }]}
+            onPress={openRejectModal}
             disabled={isSubmitting}
             accessibilityRole="button"
             accessibilityLabel="Reject Application"
@@ -438,7 +462,7 @@ export default function VerificationDeskTab() {
           </Pressable>
 
           <Pressable
-            style={[styles.actionBtn, styles.approveBtn]}
+            style={[styles.actionBtn, styles.approveBtn, isSubmitting && { opacity: 0.6 }]}
             onPress={handleApprove}
             disabled={isSubmitting}
             accessibilityRole="button"
@@ -451,6 +475,112 @@ export default function VerificationDeskTab() {
           </Pressable>
         </View>
       </View>
+
+      {/* Rejection Reason Modal */}
+      <Modal
+        visible={isRejectModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!isSubmitting) setIsRejectModalVisible(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={styles.modalIconBox}>
+                  <Ionicons name="alert-circle" size={24} color={AdminTheme.colorAlertCrimson} />
+                </View>
+                <View>
+                  <Text style={styles.modalTitle}>Reject SLSI Application</Text>
+                  <Text style={styles.modalSubtitle}>
+                    {currentItem?.farmName} • {currentItem?.legalName}
+                  </Text>
+                </View>
+              </View>
+              <Pressable
+                onPress={() => {
+                  if (!isSubmitting) setIsRejectModalVisible(false);
+                }}
+                hitSlop={10}
+              >
+                <Ionicons name="close" size={22} color={AdminTheme.colorTextMuted} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.modalInstruction}>
+              Please provide a clear and specific reason for rejecting this farmer's SLSI Organic Certification application. This exact reason will be sent immediately to the farmer as an in-app notification.
+            </Text>
+
+            {/* Quick Reason Suggestions */}
+            <View style={styles.suggestionsContainer}>
+              <Text style={styles.suggestionsHeading}>Quick Reason Presets:</Text>
+              <View style={styles.suggestionsRow}>
+                {[
+                  'Expired SLSI certificate document',
+                  'Illegible / blurry document scan',
+                  'SLSI Standard number mismatch (SLS 1324)',
+                  'Farm name or location does not match certificate',
+                ].map((preset) => (
+                  <Pressable
+                    key={preset}
+                    style={styles.suggestionChip}
+                    onPress={() => {
+                      setRejectionReasonInput(preset);
+                      setRejectError('');
+                    }}
+                  >
+                    <Text style={styles.suggestionChipText}>{preset}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Reason for Rejection *</Text>
+              <TextInput
+                style={styles.reasonTextInput}
+                placeholder="Enter specific audit rejection explanation..."
+                placeholderTextColor={AdminTheme.colorTextDim}
+                multiline
+                numberOfLines={4}
+                value={rejectionReasonInput}
+                onChangeText={(text: string) => {
+                  setRejectionReasonInput(text);
+                  if (rejectError) setRejectError('');
+                }}
+              />
+              {!!rejectError && <Text style={styles.modalErrorText}>{rejectError}</Text>}
+            </View>
+
+            <View style={styles.modalActionsRow}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => setIsRejectModalVisible(false)}
+                disabled={isSubmitting}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.modalConfirmBtn, isSubmitting && { opacity: 0.6 }]}
+                onPress={handleConfirmReject}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="close-circle" size={18} color="#FFFFFF" />
+                    <Text style={styles.modalConfirmBtnText}>Confirm & Send Rejection</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -664,4 +794,154 @@ const styles = StyleSheet.create({
   approveBtn: { backgroundColor: AdminTheme.colorBrandEmerald },
   rejectBtn: { backgroundColor: AdminTheme.colorAlertCrimson },
   actionBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+
+  // Rejection Reason Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 580,
+    backgroundColor: AdminTheme.bgPanelDark,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: AdminTheme.bgSurfaceBorder,
+    padding: 24,
+    gap: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: AdminTheme.bgSurfaceBorder,
+  },
+  modalIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: AdminTheme.colorCrimsonSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalTitle: {
+    color: AdminTheme.colorTextMain,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  modalSubtitle: {
+    color: AdminTheme.colorTextMuted,
+    fontSize: 13,
+    marginTop: 2,
+  },
+  modalInstruction: {
+    color: AdminTheme.colorTextMuted,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  suggestionsContainer: {
+    gap: 8,
+    backgroundColor: AdminTheme.bgAdminDark,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: AdminTheme.bgSurfaceBorder,
+  },
+  suggestionsHeading: {
+    color: AdminTheme.colorTextDim,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  suggestionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  suggestionChip: {
+    backgroundColor: AdminTheme.bgPanelDark,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: AdminTheme.bgSurfaceBorder,
+  },
+  suggestionChipText: {
+    color: AdminTheme.colorTextMain,
+    fontSize: 11,
+  },
+  inputContainer: {
+    gap: 6,
+  },
+  inputLabel: {
+    color: AdminTheme.colorTextMain,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  reasonTextInput: {
+    backgroundColor: AdminTheme.bgAdminDark,
+    borderWidth: 1,
+    borderColor: AdminTheme.bgSurfaceBorder,
+    borderRadius: 8,
+    padding: 12,
+    color: AdminTheme.colorTextMain,
+    fontSize: 13,
+    minHeight: 90,
+    textAlignVertical: 'top',
+  },
+  modalErrorText: {
+    color: AdminTheme.colorAlertCrimson,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 8,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: AdminTheme.bgSurfaceBorder,
+  },
+  modalCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: AdminTheme.bgSurfaceBorder,
+    backgroundColor: AdminTheme.bgAdminDark,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelBtnText: {
+    color: AdminTheme.colorTextMuted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalConfirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 6,
+    backgroundColor: AdminTheme.colorAlertCrimson,
+  },
+  modalConfirmBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
 });

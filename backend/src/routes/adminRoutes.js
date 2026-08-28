@@ -80,6 +80,7 @@ router.get('/verifications', async (req, res) => {
         },
         verificationStatus: status,
         commissionRate: f.commissionRate || (status === 'VERIFIED' ? 2.5 : 5.0),
+        rejectionReason: f.rejectionReason || '',
         submittedAt: f.createdAt ? f.createdAt.toISOString() : new Date().toISOString(),
       };
     });
@@ -110,6 +111,7 @@ router.post('/verifications/:id/approve', async (req, res) => {
       farmer.slsiStatus = 'VERIFIED';
       farmer.isSLSIVerified = true;
       farmer.commissionRate = Number(commissionRate);
+      farmer.rejectionReason = '';
       await farmer.save();
 
       if (farmer.userId) {
@@ -147,6 +149,7 @@ router.post('/verifications/:id/reject', async (req, res) => {
       farmer.slsiStatus = 'REJECTED';
       farmer.isSLSIVerified = false;
       farmer.commissionRate = 5.0;
+      farmer.rejectionReason = reason;
       await farmer.save();
 
       if (farmer.userId) {

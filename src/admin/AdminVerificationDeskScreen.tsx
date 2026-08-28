@@ -11,7 +11,20 @@
 // nested inside it. Nothing in this file assumes React Navigation's mobile
 // tab/stack context.
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Pressable, ScrollView, Image, StyleSheet, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+  Image,
+  StyleSheet,
+  Platform,
+  ActivityIndicator,
+  Alert,
+  Modal,
+  TextInput,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { VerificationRequest } from '../types';
 import {
   approveVerificationRequest,
@@ -243,13 +256,23 @@ export default function AdminVerificationDeskScreen() {
     setSelectedFarmerId(stillPending[0]?.farmerId ?? null);
   };
 
+  const [isRejectModalVisible, setIsRejectModalVisible] = useState(false);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState('');
+  const [rejectError, setRejectError] = useState('');
+
   const handleApprove = async () => {
     if (!selectedRequest || isSubmitting) return;
     setIsSubmitting(true);
     try {
+      try {
+        await adminApi.approveVerification(selectedRequest.farmerId, 2.5);
+      } catch (e) {
+        console.warn('Backend approve sync notice:', e);
+      }
       const updated = await approveVerificationRequest(selectedRequest.farmerId);
       setQueue(updated);
       advanceToNextPending(selectedRequest.farmerId, updated);
+      Alert.alert('Application Approved', `SLSI status for ${selectedRequest.legalName} set to VERIFIED.`);
     } catch (err) {
       console.error('Failed to approve verification request:', err);
     } finally {
@@ -257,13 +280,32 @@ export default function AdminVerificationDeskScreen() {
     }
   };
 
-  const handleReject = async () => {
+  const openRejectModal = () => {
+    if (!selectedRequest) return;
+    setRejectionReasonInput('');
+    setRejectError('');
+    setIsRejectModalVisible(true);
+  };
+
+  const handleConfirmReject = async () => {
     if (!selectedRequest || isSubmitting) return;
+    const reason = rejectionReasonInput.trim();
+    if (!reason) {
+      setRejectError('Please enter a specific rejection reason.');
+      return;
+    }
     setIsSubmitting(true);
     try {
-      const updated = await rejectVerificationRequest(selectedRequest.farmerId);
+      try {
+        await adminApi.rejectVerification(selectedRequest.farmerId, reason);
+      } catch (e) {
+        console.warn('Backend reject sync notice:', e);
+      }
+      const updated = await rejectVerificationRequest(selectedRequest.farmerId, reason);
       setQueue(updated);
       advanceToNextPending(selectedRequest.farmerId, updated);
+      setIsRejectModalVisible(false);
+      Alert.alert('Application Rejected', `Rejection recorded and notification sent to farmer.`);
     } catch (err) {
       console.error('Failed to reject verification request:', err);
     } finally {
@@ -537,7 +579,7 @@ export default function AdminVerificationDeskScreen() {
             </Pressable>
             <Pressable
               style={[styles.actionButton, styles.rejectButton, isSubmitting && styles.actionButtonDisabled]}
-              onPress={handleReject}
+              onPress={openRejectModal}
               disabled={isSubmitting}
             >
               <Text style={styles.actionButtonText}>
@@ -558,6 +600,88 @@ export default function AdminVerificationDeskScreen() {
           <Text style={styles.devButtonText}>Load Suspicious App</Text>
         </Pressable>
       </View>
+
+      {/* Rejection Reason Modal */}
+      <Modal
+        visible={isRejectModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!isSubmitting) setIsRejectModalVisible(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={styles.modalIconBox}>
+                  <Ionicons name="alert-circle" size={24} color={tokens.colorAlertCrimson} />
+                </View>
+                <View>
+                  <Text style={styles.modalTitle}>Reject SLSI Application</Text>
+                  <Text style={styles.modalSubtitle}>
+                    {selectedRequest?.legalName} • {selectedRequest?.mobileNumber}
+                  </Text>
+                </View>
+              </View>
+              <Pressable
+                onPress={() => {
+                  if (!isSubmitting) setIsRejectModalVisible(false);
+                }}
+                hitSlop={10}
+              >
+                <Ionicons name="close" size={22} color={tokens.colorTextMuted} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.modalInstruction}>
+              Please provide a clear and specific reason for rejecting this farmer's SLSI Organic Certification application. This exact reason will be sent immediately to the farmer as an in-app notification.
+            </Text>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Reason for Rejection *</Text>
+              <TextInput
+                style={styles.reasonTextInput}
+                placeholder="Enter specific audit rejection explanation..."
+                placeholderTextColor="#9CA3AF"
+                multiline
+                numberOfLines={4}
+                value={rejectionReasonInput}
+                onChangeText={(text: string) => {
+                  setRejectionReasonInput(text);
+                  if (rejectError) setRejectError('');
+                }}
+              />
+              {!!rejectError && <Text style={styles.modalErrorText}>{rejectError}</Text>}
+            </View>
+
+            <View style={styles.modalActionsRow}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => setIsRejectModalVisible(false)}
+                disabled={isSubmitting}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.modalConfirmBtn, isSubmitting && { opacity: 0.6 }]}
+                onPress={handleConfirmReject}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="close-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.modalConfirmBtnText}>Confirm & Send Rejection</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -921,5 +1045,123 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: '#E5E7EB',
+  },
+
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 540,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: tokens.colorBorderGray,
+    padding: 24,
+    gap: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.colorBorderGray,
+  },
+  modalIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalTitle: {
+    color: tokens.colorTextDark,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  modalSubtitle: {
+    color: tokens.colorTextMuted,
+    fontSize: 13,
+    marginTop: 2,
+  },
+  modalInstruction: {
+    color: tokens.colorTextMuted,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  inputContainer: {
+    gap: 6,
+  },
+  inputLabel: {
+    color: tokens.colorTextDark,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  reasonTextInput: {
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: tokens.colorBorderGray,
+    borderRadius: 8,
+    padding: 12,
+    color: tokens.colorTextDark,
+    fontSize: 13,
+    minHeight: 90,
+    textAlignVertical: 'top',
+  },
+  modalErrorText: {
+    color: tokens.colorAlertCrimson,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 8,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: tokens.colorBorderGray,
+  },
+  modalCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: tokens.colorBorderGray,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelBtnText: {
+    color: tokens.colorTextMuted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalConfirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 6,
+    backgroundColor: tokens.colorAlertCrimson,
+  },
+  modalConfirmBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
