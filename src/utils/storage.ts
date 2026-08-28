@@ -3473,16 +3473,49 @@ export async function getAllHelpTickets(): Promise<HelpTicket[]> {
   }
 }
 
+const GUEST_HELP_USER_ID_KEY = '@ecoharvest/guest-help-user-id';
+
+export async function getGuestUserId(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(GUEST_HELP_USER_ID_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export async function getOrCreateGuestUserId(): Promise<string> {
+  try {
+    let guestId = await AsyncStorage.getItem(GUEST_HELP_USER_ID_KEY);
+    if (!guestId) {
+      guestId = `guest_${Math.random().toString(36).substring(2, 10)}_${Date.now().toString(36)}`;
+      await AsyncStorage.setItem(GUEST_HELP_USER_ID_KEY, guestId);
+    }
+    return guestId;
+  } catch {
+    return `guest_${Date.now()}`;
+  }
+}
+
 export async function getUserHelpTickets(userId?: string, role?: 'CUSTOMER' | 'FARMER'): Promise<HelpTicket[]> {
+  let targetUserId = userId;
+  if (!targetUserId) {
+    targetUserId = (await getGuestUserId()) || undefined;
+  }
+  if (!targetUserId) {
+    return [];
+  }
+
+  try {
+    const res = await helpDeskApi.getUserTickets(targetUserId);
+    if (res && res.data && Array.isArray(res.data)) {
+      return res.data;
+    }
+  } catch (err) {
+    // Fallback to local storage
+  }
+
   const all = await getAllHelpTickets();
-  if (userId) {
-    const matched = all.filter((t) => t.userId === userId);
-    if (matched.length > 0) return matched;
-  }
-  if (role) {
-    return all.filter((t) => t.userRole === role);
-  }
-  return all;
+  return all.filter((t) => t.userId === targetUserId);
 }
 
 export async function clearHelpTickets(): Promise<void> {
@@ -3649,9 +3682,22 @@ export async function updateHelpTicketStatusLocal(
   return updatedTicket;
 }
 
-export async function getOpenHelpTicketCount(role?: 'CUSTOMER' | 'FARMER'): Promise<number> {
+export async function getOpenHelpTicketCount(role?: 'CUSTOMER' | 'FARMER', userId?: string): Promise<number> {
+  let targetUserId = userId;
+  if (!targetUserId) {
+    targetUserId = (await getGuestUserId()) || undefined;
+  }
+  if (!targetUserId) {
+    return 0;
+  }
+
   const tickets = await getAllHelpTickets();
-  return tickets.filter((t) => (t.status === 'OPEN' || t.status === 'IN_PROGRESS') && (!role || t.userRole === role)).length;
+  return tickets.filter(
+    (t) =>
+      t.userId === targetUserId &&
+      (t.status === 'OPEN' || t.status === 'IN_PROGRESS') &&
+      (!role || t.userRole === role)
+  ).length;
 }
 
 // ---------------------------------------------------------------------------

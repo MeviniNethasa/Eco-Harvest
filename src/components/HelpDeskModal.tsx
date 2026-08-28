@@ -31,6 +31,8 @@ import {
   createHelpTicketLocal,
   getActiveMode,
   getFarmerProfile,
+  getGuestUserId,
+  getOrCreateGuestUserId,
   getUserHelpTickets,
   getUserProfile,
   sendHelpTicketReply,
@@ -117,18 +119,18 @@ export default function HelpDeskModal({
   // Load User Context
   const loadUserContext = useCallback(async () => {
     const mode = await getActiveMode();
+    let currentUserId = '';
     if (mode === 'farmer') {
       setUserRole('FARMER');
       const fProf = await getFarmerProfile();
       if (fProf) {
-        setUserId(fProf.id || '');
+        currentUserId = fProf.id || '';
         const name = fProf.farmName || fProf.legalName || '';
         setUserName(name);
         setUserPhone(fProf.mobileNumber || '');
         setTicketAuthorName(name);
         setTicketAuthorPhone(fProf.mobileNumber || '');
       } else {
-        setUserId('');
         setUserName('');
         setUserPhone('');
       }
@@ -136,49 +138,52 @@ export default function HelpDeskModal({
       setUserRole('CUSTOMER');
       const cProf = await getUserProfile();
       if (cProf) {
-        setUserId(cProf.id || '');
+        currentUserId = cProf.id || '';
         setUserName(cProf.fullName || '');
         setUserPhone(cProf.phoneNumber || '');
         setTicketAuthorName(cProf.fullName || '');
         setTicketAuthorPhone(cProf.phoneNumber || '');
       } else {
-        setUserId('');
         setUserName('');
         setUserPhone('');
       }
     }
+    setUserId(currentUserId);
+    return currentUserId;
   }, []);
 
   useEffect(() => {
     if (!visible) return;
 
-    loadUserContext();
-
     let isMounted = true;
     setIsLoading(true);
 
-    getUserHelpTickets(userId || undefined, userRole)
-      .then((list) => {
-        if (isMounted) {
-          setTickets(list);
-        }
-      })
-      .catch((err) => {
-        console.warn('Error loading help tickets:', err);
-      })
-      .finally(() => {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      });
-
-    const unsub = subscribeToHelpTickets((all) => {
+    loadUserContext().then((effectiveUserId) => {
       if (!isMounted) return;
-      const userList = userId
-        ? all.filter((t) => t.userId === userId)
-        : userRole
-        ? all.filter((t) => t.userRole === userRole)
-        : all;
+      getUserHelpTickets(effectiveUserId || undefined, userRole)
+        .then((list) => {
+          if (isMounted) {
+            setTickets(list);
+          }
+        })
+        .catch((err) => {
+          console.warn('Error loading help tickets:', err);
+        })
+        .finally(() => {
+          if (isMounted) {
+            setIsLoading(false);
+          }
+        });
+    });
+
+    const unsub = subscribeToHelpTickets(async (all) => {
+      if (!isMounted) return;
+      const targetUserId = userId || (await getGuestUserId());
+      if (!targetUserId) {
+        setTickets([]);
+        return;
+      }
+      const userList = all.filter((t) => t.userId === targetUserId);
       setTickets(userList);
     });
 
@@ -210,7 +215,10 @@ export default function HelpDeskModal({
 
     setIsSubmitting(true);
     try {
-      const effectiveUserId = userId || `guest_${Date.now()}`;
+      const effectiveUserId = userId || (await getOrCreateGuestUserId());
+      if (!userId) {
+        setUserId(effectiveUserId);
+      }
       const created = await createHelpTicketLocal({
         userId: effectiveUserId,
         userName: finalName,

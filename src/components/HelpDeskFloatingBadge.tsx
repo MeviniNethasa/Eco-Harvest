@@ -18,7 +18,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { HelpTicketCategory } from '../types';
 import {
   getActiveMode,
+  getFarmerProfile,
   getOpenHelpTicketCount,
+  getUserProfile,
   subscribeToHelpTickets,
 } from '../utils/storage';
 import HelpDeskModal from './HelpDeskModal';
@@ -48,7 +50,8 @@ export default function HelpDeskFloatingBadge() {
     const mode = await getActiveMode();
     const role = mode === 'farmer' ? 'FARMER' : 'CUSTOMER';
     setIsFarmer(mode === 'farmer');
-    const count = await getOpenHelpTicketCount(role);
+    const profile = mode === 'farmer' ? await getFarmerProfile() : await getUserProfile();
+    const count = await getOpenHelpTicketCount(role, profile?.id);
     setOpenCount(count);
   };
 
