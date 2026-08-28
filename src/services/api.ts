@@ -119,6 +119,12 @@ export const productApi = {
       body: JSON.stringify(payload),
     }),
 
+  update: (id: string, payload: any) =>
+    request<{ success: boolean; message: string; data: any }>(`/products/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
   delete: (id: string) =>
     request<{ success: boolean; message: string }>(`/products/${id}`, {
       method: 'DELETE',

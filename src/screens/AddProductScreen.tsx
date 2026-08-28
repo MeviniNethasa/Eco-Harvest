@@ -44,6 +44,7 @@ const EMPTY_FORM = {
   unit: '1kg',
   imageUrl: '',
   availableQtyKg: '',
+  lowStockThreshold: '',
 };
 
 export default function AddProductScreen() {
@@ -139,9 +140,41 @@ export default function AddProductScreen() {
     setSubmitting(true);
     try {
       const finalImage = form.imageUrl.trim() || selectedImageUri || DEFAULT_IMAGE;
+      const qtyNum = form.availableQtyKg ? Number(form.availableQtyKg) : undefined;
+      const thresholdNum = form.lowStockThreshold ? Number(form.lowStockThreshold) : undefined;
 
-      // 1. Save to local device storage
-      const newCrop = await publishCrop({
+      // 1. Sync to Node.js backend first to obtain MongoDB ID and prevent duplicate listing
+      let backendId: string | undefined = undefined;
+      try {
+        const res = await productApi.createProduct({
+          farmerId: profile.id,
+          title: form.name.trim(),
+          name: form.name.trim(),
+          category: form.category,
+          pricePerKg: price,
+          pricePerUnit: price,
+          unit: form.unit.trim(),
+          availableQuantity: qtyNum || 100,
+          availableQtyKg: qtyNum || 100,
+          lowStockThreshold: thresholdNum,
+          imageUrl: finalImage,
+          farmName: profile.farmName,
+          province: profile.province,
+          district: profile.district,
+          city: profile.city,
+          isSLSIVerified: profile.isSLSIVerified ?? false,
+          isActive: true,
+        });
+        if (res && res.data && (res.data._id || res.data.id)) {
+          backendId = res.data._id?.toString() || res.data.id?.toString();
+        }
+      } catch (backendErr: any) {
+        console.log('Product backend sync notice:', backendErr?.message);
+      }
+
+      // 2. Save to local device storage with backend ID
+      await publishCrop({
+        id: backendId,
         farmerId: profile.id,
         name: form.name.trim(),
         category: form.category,
@@ -152,46 +185,27 @@ export default function AddProductScreen() {
         province: profile.province,
         district: profile.district,
         city: profile.city,
-        availableQtyKg: form.availableQtyKg ? Number(form.availableQtyKg) : undefined,
+        availableQtyKg: qtyNum,
+        lowStockThreshold: thresholdNum,
+        isActive: true,
       });
-
-      // 2. Sync to Node.js backend
-      productApi
-        .createProduct({
-          farmerId: profile.id,
-          title: form.name.trim(),
-          name: form.name.trim(),
-          category: form.category,
-          pricePerKg: price,
-          pricePerUnit: price,
-          unit: form.unit.trim(),
-          availableQuantity: form.availableQtyKg ? Number(form.availableQtyKg) : 100,
-          availableQtyKg: form.availableQtyKg ? Number(form.availableQtyKg) : 100,
-          imageUrl: finalImage,
-          farmName: profile.farmName,
-          province: profile.province,
-          district: profile.district,
-          city: profile.city,
-          isSLSIVerified: profile.isSLSIVerified ?? false,
-        })
-        .catch((e: any) => console.log('Product backend sync notice:', e?.message));
 
       setForm(EMPTY_FORM);
       setSelectedImageUri(null);
 
       showFeedback({
         type: 'success',
-        title: 'Product Listed Successfully!',
-        message: `${form.name.trim()} is now live on the marketplace. Customers can now browse and purchase your harvest.`,
+        title: 'Product Added Successfully!',
+        message: `${form.name.trim()} is now listed on your farm catalog and live on the marketplace.`,
         buttonText: 'View My Products',
         onDismiss: () => navigation.navigate('MyProductsHome' as any),
       });
     } catch (error: any) {
-      console.error('Failed to publish crop:', error);
+      console.error('Failed to add product:', error);
       showFeedback({
         type: 'error',
-        title: 'Publish Failed',
-        message: error?.message || 'Could not publish your product. Please check your inputs and try again.',
+        title: 'Failed to Add Product',
+        message: error?.message || 'Could not save your product. Please check your inputs and try again.',
         buttonText: 'Try Again',
       });
     } finally {
@@ -203,7 +217,7 @@ export default function AddProductScreen() {
     <View style={styles.container}>
       <StandardHeader
         title="Add Product"
-        subtitle={`Publish a new crop to ${profile?.farmName ?? 'your farm'}'s catalog`}
+        subtitle={`Add a new crop to ${profile?.farmName ?? 'your farm'}'s catalog`}
         showNotificationBell
       />
 
@@ -261,16 +275,28 @@ export default function AddProductScreen() {
               </Field>
             </View>
 
-            <Field label="Available Bulk Stock (kg, optional)">
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 500"
-                placeholderTextColor="#9CA3AF"
-                keyboardType="numeric"
-                value={form.availableQtyKg}
-                onChangeText={(v) => updateField('availableQtyKg', v)}
-              />
-            </Field>
+            <View style={styles.row}>
+              <Field label="Available Stock (kg)" style={{ flex: 1 }}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 500"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="numeric"
+                  value={form.availableQtyKg}
+                  onChangeText={(v) => updateField('availableQtyKg', v)}
+                />
+              </Field>
+              <Field label="Low Stock Warning Threshold (kg)" style={{ flex: 1 }}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 20"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="numeric"
+                  value={form.lowStockThreshold}
+                  onChangeText={(v) => updateField('lowStockThreshold', v)}
+                />
+              </Field>
+            </View>
 
             {/* Native Gallery & Camera Image Picker */}
             <Field label="Crop Photo">
@@ -336,10 +362,10 @@ export default function AddProductScreen() {
               onPress={handlePublish}
               disabled={submitting}
               accessibilityRole="button"
-              accessibilityLabel="Publish Crop Listing"
+              accessibilityLabel="Add product"
             >
               <Text style={styles.submitButtonText}>
-                {submitting ? 'Publishing…' : 'Publish Listing'}
+                {submitting ? 'Adding Product…' : 'Add product'}
               </Text>
             </Pressable>
           </View>

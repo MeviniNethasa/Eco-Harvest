@@ -311,25 +311,94 @@ async function saveCrops(crops: Crop[]): Promise<void> {
  * rather than assuming success.
  */
 export async function publishCrop(
-  cropInput: Omit<Crop, 'id' | 'isSLSIVerified'>
+  cropInput: Omit<Crop, 'id' | 'isSLSIVerified'> & { id?: string }
 ): Promise<Crop[]> {
   const profile = await getFarmerProfile();
   const isSLSIVerified = profile?.verificationStatus === 'VERIFIED';
-  const crop: Crop = { ...cropInput, id: generateCropId(), isSLSIVerified };
+  const cropId = cropInput.id || generateCropId();
+  const crop: Crop = {
+    ...cropInput,
+    id: cropId,
+    isSLSIVerified,
+    isActive: cropInput.isActive !== undefined ? cropInput.isActive : true,
+  };
   const existing = await getCrops();
-  const updated = [crop, ...existing];
+  // Filter out any existing item with matching ID or matching (farmerId + name) to prevent duplicate listings
+  const filtered = existing.filter(
+    (c) =>
+      c.id !== crop.id &&
+      !(
+        c.farmerId &&
+        crop.farmerId &&
+        c.farmerId === crop.farmerId &&
+        c.name.trim().toLowerCase() === crop.name.trim().toLowerCase()
+      )
+  );
+  const updated = [crop, ...filtered];
   await saveCrops(updated);
+
+  // If initial quantity is already at or below threshold, notify farmer immediately
+  if (
+    crop.lowStockThreshold !== undefined &&
+    crop.availableQtyKg !== undefined &&
+    crop.availableQtyKg <= crop.lowStockThreshold
+  ) {
+    try {
+      await addNotification({
+        role: 'FARMER',
+        recipientId: crop.farmerId,
+        category: 'INVENTORY',
+        title: `⚠️ Low Stock Warning: ${crop.name}`,
+        message: `${crop.name} stock (${crop.availableQtyKg} kg) is at or below your low stock threshold (${crop.lowStockThreshold} kg).`,
+        body: `${crop.name} stock (${crop.availableQtyKg} kg) is at or below your low stock threshold (${crop.lowStockThreshold} kg).`,
+      });
+    } catch (e) {
+      console.warn('Low stock initial alert notice:', e);
+    }
+  }
+
   return updated;
 }
 
 /**
- * Update an existing crop (e.g. price or stock-threshold edits) in place.
+ * Update an existing crop (e.g. price, active status, or stock-threshold edits) in place.
  * Throws on failure — see saveCrops.
  */
 export async function updateCrop(cropId: string, patch: Partial<Crop>): Promise<Crop[]> {
   const existing = await getCrops();
-  const updated = existing.map((c) => (c.id === cropId ? { ...c, ...patch } : c));
+  let updatedCrop: Crop | null = null;
+  const updated = existing.map((c) => {
+    if (c.id === cropId) {
+      updatedCrop = { ...c, ...patch };
+      return updatedCrop;
+    }
+    return c;
+  });
   await saveCrops(updated);
+
+  // Check low stock threshold notification if stock changed
+  if (updatedCrop) {
+    const uc: Crop = updatedCrop;
+    if (
+      uc.lowStockThreshold !== undefined &&
+      uc.availableQtyKg !== undefined &&
+      uc.availableQtyKg <= uc.lowStockThreshold
+    ) {
+      try {
+        await addNotification({
+          role: 'FARMER',
+          recipientId: uc.farmerId,
+          category: 'INVENTORY',
+          title: `⚠️ Low Stock Warning: ${uc.name}`,
+          message: `${uc.name} available stock has dropped to ${uc.availableQtyKg} kg (Warning threshold: ${uc.lowStockThreshold} kg).`,
+          body: `${uc.name} available stock has dropped to ${uc.availableQtyKg} kg (Warning threshold: ${uc.lowStockThreshold} kg).`,
+        });
+      } catch (e) {
+        console.warn('Low stock notification notice:', e);
+      }
+    }
+  }
+
   return updated;
 }
 
@@ -1008,10 +1077,12 @@ export async function getProductsByFarmerId(farmerId: string): Promise<Crop[]> {
             pricePerUnit: bp.pricePerKg || bp.pricePerUnit || 100,
             unit: bp.unit || '1kg',
             availableQtyKg: bp.availableQuantity || bp.availableQtyKg || 100,
+            lowStockThreshold: bp.lowStockThreshold,
             imageUrl:
               bp.imageUrl ||
               'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=400&q=60',
             isSLSIVerified: bp.isSLSIVerified ?? false,
+            isActive: bp.isActive !== undefined ? bp.isActive : true,
             farmName: bp.farmName || farm?.farmName || '',
             province: bp.province || farm?.province || '',
             district: bp.district || farm?.district || '',
@@ -1020,9 +1091,16 @@ export async function getProductsByFarmerId(farmerId: string): Promise<Crop[]> {
 
           const existing = await getCrops();
           let changed = false;
-          const currentMap = new Map(existing.map((c) => [c.id, c]));
           backendCrops.forEach((bc) => {
-            if (!currentMap.has(bc.id)) {
+            const existingIdx = existing.findIndex(
+              (c) =>
+                c.id === bc.id ||
+                (c.farmerId && bc.farmerId && c.farmerId === bc.farmerId && c.name.trim().toLowerCase() === bc.name.trim().toLowerCase())
+            );
+            if (existingIdx >= 0) {
+              existing[existingIdx] = { ...existing[existingIdx], ...bc };
+              changed = true;
+            } else {
               existing.unshift(bc);
               changed = true;
             }
@@ -1035,12 +1113,24 @@ export async function getProductsByFarmerId(farmerId: string): Promise<Crop[]> {
       .catch(() => {});
   }
 
+  // De-duplicate merged items by unique ID and unique (farmerId + name)
+  const seenKeys = new Set<string>();
   return merged.filter((crop) => {
     const cFarmerId = crop.farmerId?.toString().trim();
-    if (cFarmerId && cFarmerId === targetId) return true;
-    if (farm?.id && cFarmerId === farm.id.toString().trim()) return true;
-    if (targetFarmName && crop.farmName && crop.farmName.trim().toLowerCase() === targetFarmName) return true;
-    return false;
+    const matchesFarmer =
+      (cFarmerId && cFarmerId === targetId) ||
+      (farm?.id && cFarmerId === farm.id.toString().trim()) ||
+      (targetFarmName && crop.farmName && crop.farmName.trim().toLowerCase() === targetFarmName);
+
+    if (!matchesFarmer) return false;
+
+    const uniqueKey = `${crop.farmerId || 'anon'}_${crop.name.trim().toLowerCase()}`;
+    if (seenKeys.has(uniqueKey) || seenKeys.has(crop.id)) {
+      return false;
+    }
+    seenKeys.add(uniqueKey);
+    seenKeys.add(crop.id);
+    return true;
   });
 }
 

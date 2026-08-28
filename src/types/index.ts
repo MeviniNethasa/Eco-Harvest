@@ -32,6 +32,7 @@ export interface Crop {
   district: string;
   city: string;
   lowStockThreshold?: number;
+  isActive?: boolean;
   // Bulk-order stock, in kg, used by Screen M-05's handwritten-list matcher
   // (`matchHandwrittenListToVerifiedFarmers` in storage.ts) to check a
   // requested quantity against what the farmer actually has on hand.
