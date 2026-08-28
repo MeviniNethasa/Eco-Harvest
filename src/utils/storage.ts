@@ -54,7 +54,36 @@ const NOTIFICATIONS_STORAGE_KEY = '@ecoharvest/notifications';
 const VERIFICATION_REQUESTS_STORAGE_KEY = '@ecoharvest/verification-requests';
 const ACTIVE_MODE_STORAGE_KEY = '@ecoharvest/active-mode';
 
-const DELETED_TEST_FARMS = new Set(['cm', 'helow', 'cm farms', 'cm farm', 'see']);
+const DELETED_TEST_FARMS = new Set([
+  'hello farm',
+  'hello',
+  'hello farms',
+  'hellofarm',
+  'cm',
+  'helow',
+  'cm farms',
+  'cm farm',
+  'see',
+]);
+
+export const DEFAULT_PLACEHOLDER_IMAGE =
+  'https://images.unsplash.com/photo-1500937386664-56d1dfef3854?w=800';
+
+export function sanitizeImageUrl(url?: string | null): string {
+  if (!url || typeof url !== 'string') return DEFAULT_PLACEHOLDER_IMAGE;
+  const trimmed = url.trim();
+  if (
+    trimmed.startsWith('blob:') ||
+    (!trimmed.startsWith('http://') &&
+      !trimmed.startsWith('https://') &&
+      !trimmed.startsWith('file://') &&
+      !trimmed.startsWith('data:image/') &&
+      !trimmed.startsWith('/'))
+  ) {
+    return DEFAULT_PLACEHOLDER_IMAGE;
+  }
+  return trimmed;
+}
 
 /**
  * Simple pub/sub (same pattern as the crop listeners further down) so the
@@ -1113,18 +1142,25 @@ export async function getProductsByFarmerId(farmerId: string): Promise<Crop[]> {
       .catch(() => {});
   }
 
-  // De-duplicate merged items by unique ID and unique (farmerId + name)
+  // De-duplicate merged items by unique ID and unique crop name per farm
   const seenKeys = new Set<string>();
   return merged.filter((crop) => {
+    if (crop.isActive === false) return false;
     const cFarmerId = crop.farmerId?.toString().trim();
+    const cFarmName = (crop.farmName || '').trim().toLowerCase();
+
     const matchesFarmer =
-      (cFarmerId && cFarmerId === targetId) ||
-      (farm?.id && cFarmerId === farm.id.toString().trim()) ||
-      (targetFarmName && crop.farmName && crop.farmName.trim().toLowerCase() === targetFarmName);
+      (cFarmerId && targetId && cFarmerId === targetId) ||
+      (farm?.id && cFarmerId && cFarmerId === farm.id.toString().trim()) ||
+      (targetFarmName && cFarmName && (
+        cFarmName === targetFarmName ||
+        cFarmName.includes(targetFarmName) ||
+        targetFarmName.includes(cFarmName)
+      ));
 
     if (!matchesFarmer) return false;
 
-    const uniqueKey = `${crop.farmerId || 'anon'}_${crop.name.trim().toLowerCase()}`;
+    const uniqueKey = crop.name.trim().toLowerCase();
     if (seenKeys.has(uniqueKey) || seenKeys.has(crop.id)) {
       return false;
     }

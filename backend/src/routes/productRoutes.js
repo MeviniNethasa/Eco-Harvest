@@ -12,7 +12,17 @@ router.get('/', async (req, res) => {
     if (farmerId) filter.farmerId = farmerId;
     if (verifiedOnly === 'true') filter.isSLSIVerified = true;
 
-    const products = await Product.find(filter).sort({ createdAt: -1 });
+    const DELETED_TEST_FARMS = ['hello farm', 'hello', 'hello farms', 'hellofarm', 'cm', 'helow', 'cm farms', 'cm farm', 'see'];
+    const rawProducts = await Product.find(filter).sort({ createdAt: -1 });
+    const products = rawProducts
+      .filter((p) => !DELETED_TEST_FARMS.includes((p.farmName || '').trim().toLowerCase()))
+      .map((p) => {
+        const obj = p.toObject ? p.toObject() : p;
+        if (obj.imageUrl && obj.imageUrl.startsWith('blob:')) {
+          obj.imageUrl = 'https://images.unsplash.com/photo-1500937386664-56d1dfef3854?w=800';
+        }
+        return obj;
+      });
     return res.status(200).json({ success: true, count: products.length, data: products });
   } catch (error) {
     console.error('Error fetching products:', error);

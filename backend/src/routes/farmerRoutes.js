@@ -24,7 +24,18 @@ router.get('/', async (req, res) => {
       ];
     }
 
-    const farmers = await FarmerProfile.find(filter).sort({ isSLSIVerified: -1, createdAt: -1 });
+    const DELETED_TEST_FARMS = ['hello farm', 'hello', 'hello farms', 'hellofarm', 'cm', 'helow', 'cm farms', 'cm farm', 'see'];
+    const rawFarmers = await FarmerProfile.find(filter).sort({ isSLSIVerified: -1, createdAt: -1 });
+    const farmers = rawFarmers
+      .filter((f) => !DELETED_TEST_FARMS.includes((f.farmName || '').trim().toLowerCase()))
+      .map((f) => {
+        const obj = f.toObject ? f.toObject() : f;
+        if (obj.farmCoverPhotoUrl && obj.farmCoverPhotoUrl.startsWith('blob:')) {
+          obj.farmCoverPhotoUrl = 'https://images.unsplash.com/photo-1500937386664-56d1dfef3854?w=800';
+        }
+        return obj;
+      });
+
     return res.status(200).json({ success: true, count: farmers.length, data: farmers });
   } catch (error) {
     console.error('Error fetching farmers:', error);

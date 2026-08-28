@@ -27,6 +27,7 @@ import {
   getProductsByFarmerId,
   subscribeToCrops,
   subscribeToFarmers,
+  sanitizeImageUrl,
 } from '../utils/storage';
 import ProductCard from '../components/ProductCard';
 import SLSIBadge from '../components/SLSIBadge';
@@ -39,9 +40,6 @@ type FarmerDetailRouteProp = RouteProp<
 const PLACEHOLDER_COVER =
   'https://images.unsplash.com/photo-1500937386664-56d1dfef3854?w=800&q=60';
 
-// FarmerProfile has no single pre-formatted `location` field — build one
-// from its required city/district/province strings (same helper as
-// MarketplaceScreen.tsx).
 function formatFarmLocation(farm: FarmerProfile | null): string {
   if (!farm) return '';
   const parts = [farm.city, farm.district, farm.province].filter(
@@ -115,7 +113,7 @@ export default function FarmerDetailScreen() {
     setRefreshKey((prev) => prev + 1);
   }, []);
 
-  const coverUri = farm?.farmCoverPhotoUrl || PLACEHOLDER_COVER;
+  const coverUri = sanitizeImageUrl(farm?.farmCoverPhotoUrl);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -137,34 +135,32 @@ export default function FarmerDetailScreen() {
             </View>
 
             <View style={styles.headerBody}>
-              <View style={styles.farmNameRow}>
-                <Text style={styles.farmName}>{farm?.farmName || farmName}</Text>
+              <Text style={styles.farmName}>{farm?.farmName || farmName}</Text>
 
-                <View style={styles.badgesCluster}>
-                  {rating && (
-                    <View style={styles.ratingBadge}>
-                      <Ionicons
-                        name="star"
-                        size={13}
-                        color={rating.count > 0 ? '#D97706' : '#9CA3AF'}
-                      />
-                      <Text style={styles.ratingBadgeText}>
-                        {rating.count > 0
-                          ? `${rating.average.toFixed(1)} (${rating.count})`
-                          : 'New'}
-                      </Text>
-                    </View>
-                  )}
+              <View style={styles.badgesCluster}>
+                {rating && (
+                  <View style={styles.ratingBadge}>
+                    <Ionicons
+                      name="star"
+                      size={13}
+                      color={rating.count > 0 ? '#D97706' : '#9CA3AF'}
+                    />
+                    <Text style={styles.ratingBadgeText}>
+                      {rating.count > 0
+                        ? `${rating.average.toFixed(1)} (${rating.count})`
+                        : 'New'}
+                    </Text>
+                  </View>
+                )}
 
-                  {freshness && (
-                    <View style={styles.freshnessBadge}>
-                      <Ionicons name="leaf" size={13} color="#15803D" />
-                      <Text style={styles.freshnessBadgeText}>
-                        {freshness.average}% Fresh ({freshness.grade})
-                      </Text>
-                    </View>
-                  )}
-                </View>
+                {freshness && (
+                  <View style={styles.freshnessBadge}>
+                    <Ionicons name="leaf" size={13} color="#15803D" />
+                    <Text style={styles.freshnessBadgeText}>
+                      {freshness.average}% Fresh ({freshness.grade})
+                    </Text>
+                  </View>
+                )}
               </View>
 
               {formatFarmLocation(farm) ? (
@@ -231,22 +227,20 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 8,
   },
-  farmNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
   farmName: {
-    flex: 1,
-    fontSize: 22,
-    fontWeight: '700',
+    width: '100%',
+    fontSize: 24,
+    fontWeight: '800',
     color: '#111827',
+    marginBottom: 6,
+    lineHeight: 30,
   },
   badgesCluster: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
+    marginBottom: 6,
   },
   ratingBadge: {
     flexDirection: 'row',

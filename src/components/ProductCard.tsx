@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Crop } from '../types';
-import { addToCart } from '../utils/storage';
+import { addToCart, sanitizeImageUrl } from '../utils/storage';
 import { showFeedback, showToast } from './FeedbackPopup';
 
 interface ProductCardProps {
@@ -50,9 +50,11 @@ export default function ProductCard({ crop, onAddedToCart }: ProductCardProps) {
     }
   };
 
+  const imageUri = sanitizeImageUrl(crop.imageUrl);
+
   return (
     <View style={styles.card}>
-      <Image source={{ uri: crop.imageUrl }} style={styles.image} />
+      <Image source={{ uri: imageUri }} style={styles.image} />
 
       <View style={styles.body}>
         <Text style={styles.title} numberOfLines={1}>
