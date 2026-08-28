@@ -3,9 +3,9 @@
 // Phase 3 Desktop Admin Command Panel (design.md / admin.md)
 // 240px Fixed Sidebar with seamless Tab switching across:
 // - Screen A-01: Verification Request Desk (SLSI Certificate Audit)
-// - Screen A-02: Moderated Chat Interception Feed
-// - Screen A-03: Active Escrow Ledger & Uber Logistics Tracker
-// - Screen A-04: Ecosystem Health & Analytics Dashboard
+// - Screen A-02: Active Escrow Ledger & Uber Logistics Tracker
+// - Screen A-03: Ecosystem Health & Analytics Dashboard
+// - Screen A-04: Help Desk & Disputes Resolution
 
 import React, { useState } from 'react';
 import {
@@ -19,12 +19,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { AdminTheme } from './AdminTheme';
 import VerificationDeskTab from './screens/VerificationDeskTab';
-import ModeratedChatTab from './screens/ModeratedChatTab';
 import EscrowLogisticsTab from './screens/EscrowLogisticsTab';
 import EcosystemAnalyticsTab from './screens/EcosystemAnalyticsTab';
 import HelpDeskTab from './screens/HelpDeskTab';
 
-type AdminTab = 'VERIFICATION' | 'MODERATION' | 'ESCROW' | 'ANALYTICS' | 'HELP_DESK';
+type AdminTab = 'VERIFICATION' | 'ESCROW' | 'ANALYTICS' | 'HELP_DESK';
 
 interface NavItem {
   id: AdminTab;
@@ -43,32 +42,25 @@ const NAV_ITEMS: NavItem[] = [
     code: 'A-01',
   },
   {
-    id: 'MODERATION',
-    title: 'Moderated Chat Feed',
-    subtitle: 'Interception & Compliance',
-    icon: 'shield-checkmark',
-    code: 'A-02',
-  },
-  {
     id: 'ESCROW',
     title: 'Escrow & Uber Logistics',
     subtitle: 'Stripe Holds & Vehicle Fleet',
     icon: 'card',
-    code: 'A-03',
+    code: 'A-02',
   },
   {
     id: 'ANALYTICS',
     title: 'Ecosystem Analytics',
     subtitle: 'Health & Demand Gap Map',
     icon: 'bar-chart',
-    code: 'A-04',
+    code: 'A-03',
   },
   {
     id: 'HELP_DESK',
     title: 'Help Desk & Disputes',
     subtitle: 'Customer & Farmer Resolution',
     icon: 'headset',
-    code: 'A-05',
+    code: 'A-04',
   },
 ];
 
@@ -203,7 +195,6 @@ export default function AdminPortalScreen() {
           {/* Active Screen Tab Mounting */}
           <View style={styles.tabContentContainer}>
             {activeTab === 'VERIFICATION' && <VerificationDeskTab key={lastRefreshed} />}
-            {activeTab === 'MODERATION' && <ModeratedChatTab key={lastRefreshed} />}
             {activeTab === 'ESCROW' && <EscrowLogisticsTab key={lastRefreshed} />}
             {activeTab === 'ANALYTICS' && <EcosystemAnalyticsTab key={lastRefreshed} />}
             {activeTab === 'HELP_DESK' && <HelpDeskTab key={lastRefreshed} />}
