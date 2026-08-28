@@ -367,6 +367,70 @@ export default function BulkOrdersScreen() {
     }
   };
 
+function parseTextToExtractedItems(text: string): ExtractedListItem[] {
+  if (!text || typeof text !== 'string') return [];
+  const rawSegments = text
+    .split(/[\n;•\r]+/)
+    .flatMap((line) => {
+      if (line.includes(',') && /\d+\s*(?:kg|g|kilos?|grams?|units?|packs?)/i.test(line)) {
+        return line.split(',').map((s) => s.trim());
+      }
+      return [line.trim()];
+    })
+    .filter(Boolean);
+
+  const items: ExtractedListItem[] = [];
+  for (const segment of rawSegments) {
+    const cleaned = segment
+      .replace(/^[\-\*\u2022\s\d+\.\)\:]+/, '')
+      .replace(/[\.\-\:\s]+$/, '')
+      .trim();
+
+    if (!cleaned) continue;
+
+    let qty = 10;
+    let name = cleaned;
+
+    const mGrams1 = /^(\d+(?:\.\d+)?)\s*(?:g|grams?)\s+(?:of\s+)?(.+)$/i.exec(cleaned);
+    const mGrams2 = /^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:g|grams?)$/i.exec(cleaned);
+
+    if (mGrams1) {
+      const val = parseFloat(mGrams1[1]);
+      qty = isNaN(val) ? 0.5 : Math.round((val / 1000) * 100) / 100;
+      name = mGrams1[2].replace(/^(?:of|g|grams?)\s+/i, '').trim();
+    } else if (mGrams2) {
+      const val = parseFloat(mGrams2[2]);
+      qty = isNaN(val) ? 0.5 : Math.round((val / 1000) * 100) / 100;
+      name = mGrams2[1].trim();
+    } else {
+      const m1 = /^(\d+(?:\.\d+)?)\s*(?:kg|kilos?|kgs?|units?|bundles?|packs?|boxes?)?\s*(?:of\s+)?(.+)$/i.exec(cleaned);
+      const m2 = /^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:kg|kilos?|kgs?|units?|bundles?|packs?|boxes?)?$/i.exec(cleaned);
+
+      if (m1 && !isNaN(parseFloat(m1[1]))) {
+        qty = parseFloat(m1[1]);
+        name = m1[2].replace(/^(?:of|kg|kilos?|kgs?|units?|bundles?|packs?)\s+/i, '').trim();
+      } else if (m2 && !isNaN(parseFloat(m2[2]))) {
+        qty = parseFloat(m2[2]);
+        name = m2[1].trim();
+      }
+    }
+
+    name = name.replace(/^[\.\-\:\s]+/, '').replace(/[\.\-\:\s]+$/, '').trim();
+    if (!name || name.length < 2) continue;
+
+    const formattedName = name.charAt(0).toUpperCase() + name.slice(1);
+    items.push({
+      id: makeItemId(),
+      rawText: segment,
+      cropName: formattedName,
+      requestedQtyKg: qty || 10,
+      confidence: 96,
+    });
+  }
+
+  return items;
+}
+
   const handleSendText = () => {
     if (!inputText.trim()) return;
     const text = inputText.trim();
@@ -386,37 +450,42 @@ export default function BulkOrdersScreen() {
       .extractHandwrittenList({ text })
       .then((res) => {
         const extracted = res.extracted_items || res.items || [];
-        const parsedList: ExtractedListItem[] =
-          extracted.length > 0
-            ? extracted.map((item: any) => ({
-                id: makeItemId(),
-                rawText: item.rawText || `${item.quantity || 10}kg ${item.cropName || item.item}`,
-                cropName: item.cropName || item.item || 'Produce',
-                requestedQtyKg: Number(item.requestedQtyKg || item.quantity) || 10,
-                confidence: item.confidence || 95,
-              }))
-            : [
-                { id: makeItemId(), rawText: text, cropName: text, requestedQtyKg: 20, confidence: 95 },
-              ];
+        let parsedList: ExtractedListItem[] = [];
+        if (extracted.length > 0) {
+          parsedList = extracted.map((item: any) => ({
+            id: makeItemId(),
+            rawText: item.rawText || `${item.quantity || 10}kg ${item.cropName || item.item}`,
+            cropName: item.cropName || item.item || 'Produce',
+            requestedQtyKg: Number(item.requestedQtyKg || item.quantity) || 10,
+            confidence: item.confidence || 95,
+          }));
+        } else {
+          parsedList = parseTextToExtractedItems(text);
+        }
+
+        if (parsedList.length === 0) {
+          parsedList = [{ id: makeItemId(), rawText: text, cropName: text, requestedQtyKg: 20, confidence: 95 }];
+        }
 
         const agentMsg: ChatMessage = {
           id: `agent_${Date.now()}`,
           sender: 'AGENT',
           timestamp: new Date().toISOString(),
-          text: `Processed your requirement list:`,
+          text: `Processed your requirement list (${parsedList.length} item(s)):`,
           isExtractionCard: true,
           items: parsedList,
         };
         setMessages((prev) => [...prev, agentMsg]);
       })
       .catch(() => {
+        const parsedList = parseTextToExtractedItems(text);
         const agentMsg: ChatMessage = {
           id: `agent_${Date.now()}`,
           sender: 'AGENT',
           timestamp: new Date().toISOString(),
-          text: `Extracted list items:`,
+          text: `Extracted list items (${parsedList.length} item(s)):`,
           isExtractionCard: true,
-          items: [{ id: makeItemId(), rawText: text, cropName: text, requestedQtyKg: 25, confidence: 94 }],
+          items: parsedList.length > 0 ? parsedList : [{ id: makeItemId(), rawText: text, cropName: text, requestedQtyKg: 25, confidence: 94 }],
         };
         setMessages((prev) => [...prev, agentMsg]);
       })
