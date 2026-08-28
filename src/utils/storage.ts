@@ -3403,16 +3403,22 @@ function generateChatMessageId(): string {
  */
 export async function getChatThread(
   threadId: string,
-  overrides?: { recipientName?: string; orderId?: string }
+  overrides?: { recipientName?: string; orderId?: string; farmerId?: string; customerId?: string }
 ): Promise<ChatThread> {
   const all = await getAllChatThreadsMap();
   const existing = all[threadId];
   if (existing) {
-    // A caller-supplied recipientName (e.g. from a "Message <Farmer>" nav
-    // param) can update the display name on an already-created thread
-    // without disturbing its orderId/cropSummary/paymentStatus.
+    let hasChanges = false;
+    let updated: ChatThread = { ...existing };
     if (overrides?.recipientName && overrides.recipientName !== existing.recipientName) {
-      const updated: ChatThread = { ...existing, recipientName: overrides.recipientName };
+      updated.recipientName = overrides.recipientName;
+      hasChanges = true;
+    }
+    if (overrides?.farmerId && overrides.farmerId !== existing.farmerId) {
+      updated.farmerId = overrides.farmerId;
+      hasChanges = true;
+    }
+    if (hasChanges) {
       await saveAllChatThreads({ ...all, [threadId]: updated });
       return updated;
     }
@@ -3455,6 +3461,8 @@ export async function getChatThread(
     recipientName:
       overrides?.recipientName ?? order?.farmGroups?.[0]?.farmName ?? 'Nuwara Eliya Organic Farm',
     isVerified: true,
+    farmerId: overrides?.farmerId ?? order?.farmGroups?.[0]?.farmerId,
+    customerId: overrides?.customerId ?? (order as any)?.customerId,
   };
 
   await saveAllChatThreads({ ...all, [threadId]: thread });
@@ -3557,76 +3565,11 @@ function minutesAgoIso(minutes: number): string {
  * Initial sample notifications for both the Customer and Farmer viewport
  * channels (Notification.md Section 2.1 / 2.2), seeded once into
  * AsyncStorage the first time `getAllNotifications` is ever called on a
- * fresh install. Message copy matches the design spec's channel matrix
- * verbatim so the demo UI reads exactly like the spec's examples.
+/**
+ * Initial empty notifications for clean live operational tracking.
+ * Only real live platform actions will generate notifications.
  */
-const INITIAL_NOTIFICATIONS: AppNotification[] = [
-  // --- 2.1 Customer Viewport Channel ---
-  {
-    id: 'notif_seed_customer_order_accepted',
-    role: 'CUSTOMER',
-    title: 'Order Accepted',
-    message: 'Farmer has verified harvest stock and locked inventory',
-    category: 'ORDER',
-    isRead: false,
-    timestamp: minutesAgoIso(4),
-  },
-  {
-    id: 'notif_seed_customer_dispatch',
-    role: 'CUSTOMER',
-    title: 'Uber Dispatch',
-    message: 'Driver assigned and en route to farm pickup',
-    category: 'DISPATCH',
-    isRead: false,
-    timestamp: minutesAgoIso(18),
-  },
-  {
-    id: 'notif_seed_customer_recommendation',
-    role: 'CUSTOMER',
-    title: 'Nearby Match',
-    message: 'New SLSI verified organic farmer available in your district',
-    category: 'RECOMMENDATION',
-    isRead: true,
-    timestamp: minutesAgoIso(240),
-  },
-  // --- 2.2 Farmer Viewport Channel ---
-  {
-    id: 'notif_seed_farmer_new_order',
-    role: 'FARMER',
-    title: 'New Incoming Order',
-    message: 'Direct order locked. Handshake OTP generated',
-    category: 'ORDER',
-    isRead: false,
-    timestamp: minutesAgoIso(9),
-  },
-  {
-    id: 'notif_seed_farmer_bulk_match',
-    role: 'FARMER',
-    title: 'AI Demand Match',
-    message: 'New bulk requirement query matches your active crops',
-    category: 'BULK_MATCH',
-    isRead: false,
-    timestamp: minutesAgoIso(35),
-  },
-  {
-    id: 'notif_seed_farmer_low_stock',
-    role: 'FARMER',
-    title: 'High Priority Alert',
-    message: 'Inventory levels fallen below configured threshold',
-    category: 'INVENTORY',
-    isRead: false,
-    timestamp: minutesAgoIso(60),
-  },
-  {
-    id: 'notif_seed_farmer_review',
-    role: 'FARMER',
-    title: 'Customer Feedback',
-    message: 'New rating and freshness feedback received for your harvest',
-    category: 'REVIEW',
-    isRead: true,
-    timestamp: minutesAgoIso(320),
-  },
-];
+const INITIAL_NOTIFICATIONS: AppNotification[] = [];
 
 /**
  * Simple pub/sub (same pattern as cart/crops/orders/reviews above) so any
@@ -3708,12 +3651,14 @@ async function getAllNotifications(): Promise<AppNotification[]> {
   try {
     const raw = await AsyncStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
     if (raw) {
-      localList = JSON.parse(raw) as AppNotification[];
+      localList = (JSON.parse(raw) as AppNotification[]).filter(
+        (n) => !n.id.startsWith('notif_seed_') && !n.id.startsWith('sim_')
+      );
     } else {
-      localList = INITIAL_NOTIFICATIONS;
+      localList = [];
       await AsyncStorage.setItem(
         NOTIFICATIONS_STORAGE_KEY,
-        JSON.stringify(INITIAL_NOTIFICATIONS)
+        JSON.stringify([])
       );
     }
   } catch (error) {
@@ -3728,16 +3673,18 @@ async function getAllNotifications(): Promise<AppNotification[]> {
 
     const res = await notificationApi.getNotifications(lookupId);
     if (res && res.data && Array.isArray(res.data)) {
-      const backendNotifs: AppNotification[] = res.data.map((bn: any) => ({
-        id: bn._id ? bn._id.toString() : bn.id || generateNotificationId(),
-        role: bn.role === 'FARMER' ? 'FARMER' : 'CUSTOMER',
-        category: (['ORDER', 'DISPATCH', 'RECOMMENDATION', 'INVENTORY', 'REVIEW', 'BULK_MATCH'].includes(bn.type) ? bn.type : 'RECOMMENDATION') as any,
-        title: bn.title || 'Notification',
-        message: bn.message || bn.body || bn.title || '',
-        body: bn.body || bn.message || '',
-        timestamp: bn.createdAt || bn.timestamp || new Date().toISOString(),
-        isRead: bn.isRead ?? bn.readStatus ?? false,
-      }));
+      const backendNotifs: AppNotification[] = res.data
+        .filter((bn: any) => !bn.id?.startsWith('notif_seed_') && !bn.id?.startsWith('sim_'))
+        .map((bn: any) => ({
+          id: bn._id ? bn._id.toString() : bn.id || generateNotificationId(),
+          role: bn.role === 'FARMER' ? 'FARMER' : 'CUSTOMER',
+          category: (['ORDER', 'DISPATCH', 'RECOMMENDATION', 'INVENTORY', 'REVIEW', 'BULK_MATCH'].includes(bn.type) ? bn.type : 'RECOMMENDATION') as any,
+          title: bn.title || 'Notification',
+          message: bn.message || bn.body || bn.title || '',
+          body: bn.body || bn.message || '',
+          timestamp: bn.createdAt || bn.timestamp || new Date().toISOString(),
+          isRead: bn.isRead ?? bn.readStatus ?? false,
+        }));
 
       const mergedMap = new Map<string, AppNotification>();
       backendNotifs.forEach((n) => mergedMap.set(n.id, n));

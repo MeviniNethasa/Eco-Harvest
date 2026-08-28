@@ -152,34 +152,6 @@ export default function NotificationModal({ visible, onClose }: NotificationModa
     markAllNotificationsAsRead(NOTIFICATION_ROLE);
   }, []);
 
-  // --- Section 3.3: Developer Sandbox Simulation Bar (Customer presets) ---
-  const handleSimOrderAccepted = useCallback(async () => {
-    await addNotification({
-      role: 'CUSTOMER',
-      title: 'Order Accepted',
-      message: 'Farmer has verified harvest stock and locked inventory',
-      category: 'ORDER',
-    });
-  }, []);
-
-  const handleSimDriverDispatch = useCallback(async () => {
-    await addNotification({
-      role: 'CUSTOMER',
-      title: 'Uber Dispatch',
-      message: 'Driver assigned and en route to farm pickup',
-      category: 'DISPATCH',
-    });
-  }, []);
-
-  const handleSimNearbyMatch = useCallback(async () => {
-    await addNotification({
-      role: 'CUSTOMER',
-      title: 'Nearby Match',
-      message: 'New SLSI verified organic farmer available in your district',
-      category: 'RECOMMENDATION',
-    });
-  }, []);
-
   return (
     <Modal
       visible={visible}
@@ -217,6 +189,9 @@ export default function NotificationModal({ visible, onClose }: NotificationModa
               <View style={styles.emptyState}>
                 <Ionicons name="notifications-outline" size={36} color={colors.textMuted} />
                 <Text style={styles.emptyStateText}>No notifications yet</Text>
+                <Text style={styles.emptyStateSubtext}>
+                  Live updates regarding your orders, dispatch alerts, and farm messages will appear here.
+                </Text>
               </View>
             ) : (
               visibleNotifications.map((notification) => (
@@ -228,23 +203,6 @@ export default function NotificationModal({ visible, onClose }: NotificationModa
               ))
             )}
           </ScrollView>
-
-          <View style={styles.sandboxBar}>
-            <Text style={styles.sandboxLabel}>Developer Sandbox</Text>
-            <View style={styles.sandboxButtonRow}>
-              <Pressable style={styles.sandboxButton} onPress={handleSimOrderAccepted}>
-                <Text style={styles.sandboxButtonText}>Sim: Order Accepted</Text>
-              </Pressable>
-              <Pressable style={styles.sandboxButton} onPress={handleSimDriverDispatch}>
-                <Text style={styles.sandboxButtonText}>Sim: Driver Dispatch</Text>
-              </Pressable>
-            </View>
-            <View style={styles.sandboxButtonRow}>
-              <Pressable style={styles.sandboxButton} onPress={handleSimNearbyMatch}>
-                <Text style={styles.sandboxButtonText}>Sim: Nearby Match</Text>
-              </Pressable>
-            </View>
-          </View>
         </SafeAreaView>
       </View>
     </Modal>
@@ -377,39 +335,12 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
   },
 
-  sandboxBar: {
-    borderTopWidth: 1,
-    borderTopColor: colors.borderGray,
-    backgroundColor: colors.bgMain,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 14,
-    gap: 8,
-  },
-  sandboxLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  sandboxButtonRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  sandboxButton: {
-    flex: 1,
-    minHeight: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.borderGray,
-    backgroundColor: '#FFFFFF',
-  },
-  sandboxButtonText: {
+  emptyStateSubtext: {
     fontSize: 12,
-    fontWeight: '600',
-    color: colors.textDark,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: 4,
+    maxWidth: 260,
+    lineHeight: 16,
   },
 });

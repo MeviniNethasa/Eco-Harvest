@@ -433,6 +433,8 @@ export interface ChatThread {
   paymentStatus: string; // e.g. "Escrow Locked" / "Pending Payment"
   recipientName: string;
   isVerified: boolean;
+  farmerId?: string;
+  customerId?: string;
 }
 
 // ---------------------------------------------------------------------------

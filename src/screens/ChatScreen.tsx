@@ -29,6 +29,7 @@ import {
   getAllChatThreads,
   getChatMessages,
   getChatThread,
+  getFarmerProfile,
   sendChatMessage,
   subscribeToChatMessages,
 } from '../utils/storage';
@@ -41,6 +42,7 @@ type ChatRouteParams = {
   threadId?: string;
   chatId?: string;
   recipientName?: string;
+  farmerId?: string;
   userRole?: ChatMessage['senderRole'];
 };
 
@@ -97,21 +99,33 @@ export default function ChatScreen() {
 
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Load conversation threads for Level 1 List View
+  // Load conversation threads for Level 1 List View with private farmer isolation
   const loadThreadsList = useCallback(async () => {
     setIsLoadingList(true);
     try {
       let allThreads = await getAllChatThreads();
 
-      // If empty, initialize a couple of realistic demo threads so the list is vibrant
-      if (allThreads.length === 0) {
-        const demoThread1 = await getChatThread('thread_demo_001', {
-          recipientName: 'Fresh Supermarket (Colombo)',
-        });
-        const demoThread2 = await getChatThread('thread_demo_002', {
-          recipientName: 'Green Kitchen Bistro',
-        });
-        allThreads = [demoThread1, demoThread2];
+      if (currentUserRole === 'FARMER') {
+        const currentFarmer = await getFarmerProfile();
+        const farmerId = currentFarmer?.id?.toString().trim();
+        const farmName = (currentFarmer?.farmName || '').trim().toLowerCase();
+
+        // Strictly isolate conversations explicitly addressed to this farmer's profile
+        if (farmerId || farmName) {
+          allThreads = allThreads.filter((t) => {
+            const tFarmerId = (t.farmerId || '').toString().trim();
+            const tRecipient = (t.recipientName || '').trim().toLowerCase();
+            const tId = (t.id || '').trim();
+
+            return (
+              (farmerId && (tFarmerId === farmerId || tId.includes(farmerId))) ||
+              (farmName && (tRecipient === farmName || tRecipient.includes(farmName) || farmName.includes(tRecipient)))
+            );
+          });
+        } else {
+          allThreads = [];
+        }
+        // Do NOT inject any demo threads for farmer portal!
       }
 
       const withPreviews = await Promise.all(
@@ -134,7 +148,7 @@ export default function ChatScreen() {
     } finally {
       setIsLoadingList(false);
     }
-  }, []);
+  }, [currentUserRole]);
 
   useFocusEffect(
     useCallback(() => {
@@ -150,7 +164,10 @@ export default function ChatScreen() {
     async function loadRoom() {
       setIsLoadingRoom(true);
       const [loadedThread, loadedMessages] = await Promise.all([
-        getChatThread(selectedThreadId as string, { recipientName: route.params?.recipientName }),
+        getChatThread(selectedThreadId as string, {
+          recipientName: route.params?.recipientName,
+          farmerId: route.params?.farmerId,
+        }),
         getChatMessages(selectedThreadId as string),
       ]);
       if (isMounted) {
