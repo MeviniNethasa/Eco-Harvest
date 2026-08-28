@@ -16,7 +16,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { FarmGroup, Order, OrderStatus, OrdersStackParamList } from '../types';
 import {
-  getOrders,
+  getCustomerOrders,
   getUnreadNotificationCount,
   subscribeToNotifications,
   subscribeToOrders,
@@ -46,7 +46,7 @@ const STATUS_META: Record<OrderStatus, { label: string; color: string }> = {
   placed: { label: 'Placed', color: colors.primaryGreen },
   confirmed: { label: 'Confirmed', color: colors.primaryGreen },
   in_transit: { label: 'In Transit', color: colors.warning },
-  delivered: { label: 'Delivered', color: colors.primaryGreen },
+  delivered: { label: 'Payment Released', color: colors.primaryGreen },
   cancelled: { label: 'Cancelled', color: colors.danger },
 };
 
@@ -66,7 +66,14 @@ function formatDate(iso: string): string {
   });
 }
 
-function StatusBadge({ status }: { status: OrderStatus }) {
+function StatusBadge({ status, escrowStatus }: { status: OrderStatus; escrowStatus?: string }) {
+  if (escrowStatus === 'RELEASED' || status === 'delivered') {
+    return (
+      <View style={[styles.statusBadge, { backgroundColor: '#DCFCE7' }]}>
+        <Text style={[styles.statusBadgeText, { color: '#15803D' }]}>Payment Released</Text>
+      </View>
+    );
+  }
   const meta = STATUS_META[status] ?? STATUS_META.placed;
   return (
     <View style={[styles.statusBadge, { backgroundColor: `${meta.color}1A` }]}>
@@ -86,8 +93,8 @@ function OrderCard({
 }) {
   const navigation = useNavigation<OrdersNavProp>();
   const itemCount = order.items.reduce((sum, item) => sum + item.quantity, 0);
-  const isTrackable = TRACKABLE_STATUSES.includes(order.status);
-  const isDelivered = order.status === 'delivered';
+  const isTrackable = TRACKABLE_STATUSES.includes(order.status) && order.escrowStatus !== 'RELEASED';
+  const isDelivered = order.status === 'delivered' || order.escrowStatus === 'RELEASED';
   const isReviewed = Boolean(order.isReviewed);
 
   return (
@@ -99,7 +106,7 @@ function OrderCard({
           </Text>
           <Text style={styles.orderDate}>{formatDate(order.createdAt)}</Text>
         </View>
-        <StatusBadge status={order.status} />
+        <StatusBadge status={order.status} escrowStatus={order.escrowStatus} />
       </View>
 
       <View style={styles.itemsList}>
@@ -285,7 +292,7 @@ export default function OrdersScreen() {
   const [multiFarmerModalOrder, setMultiFarmerModalOrder] = useState<Order | null>(null);
 
   const refreshOrders = useCallback(async () => {
-    const latest = await getOrders();
+    const latest = await getCustomerOrders();
     setOrders(latest);
     setLoading(false);
   }, []);
@@ -299,9 +306,11 @@ export default function OrdersScreen() {
   );
 
   useEffect(() => {
-    const unsubscribe = subscribeToOrders(setOrders);
+    const unsubscribe = subscribeToOrders(() => {
+      refreshOrders();
+    });
     return unsubscribe;
-  }, []);
+  }, [refreshOrders]);
 
   const handleMessageFarmer = useCallback(
     (order: Order) => {

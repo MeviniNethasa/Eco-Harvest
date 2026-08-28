@@ -37,6 +37,7 @@ interface AnalyticsData {
     openSupportTickets: number;
     verifiedFarmerCount: number;
     totalFarmers: number;
+    disputeRatioPercent?: number;
   };
   freshnessBreakdown: {
     gradeAOrganic: number;
@@ -295,12 +296,27 @@ export default function EcosystemAnalyticsTab() {
                 <Text style={styles.healthLabel}>SLSI Verified Merchants:</Text>
                 <Text style={styles.healthVal}>
                   {kpiSummary.verifiedFarmerCount} / {kpiSummary.totalFarmers} (
-                  {Math.round((kpiSummary.verifiedFarmerCount / kpiSummary.totalFarmers) * 100)}%)
+                  {kpiSummary.totalFarmers > 0
+                    ? Math.round((kpiSummary.verifiedFarmerCount / kpiSummary.totalFarmers) * 100)
+                    : 100}%)
                 </Text>
               </View>
               <View style={styles.healthRow}>
                 <Text style={styles.healthLabel}>Dispute Ratio:</Text>
-                <Text style={[styles.healthVal, { color: AdminTheme.colorBrandEmerald }]}>0.18% (Optimal)</Text>
+                <Text
+                  style={[
+                    styles.healthVal,
+                    {
+                      color:
+                        (kpiSummary.disputeRatioPercent ?? 0) > 2
+                          ? AdminTheme.colorAlertCrimson
+                          : AdminTheme.colorBrandEmerald,
+                    },
+                  ]}
+                >
+                  {(kpiSummary.disputeRatioPercent ?? 0).toFixed(2)}% (
+                  {(kpiSummary.disputeRatioPercent ?? 0) > 2 ? 'Action Required' : 'Optimal'})
+                </Text>
               </View>
             </View>
           </View>

@@ -213,11 +213,9 @@ export interface Order {
   payment: PaymentDetails;
   status: OrderStatus;
   createdAt: string; // ISO timestamp
-  // Screen M-07: set true once `submitProductReview` (storage.ts) has
-  // persisted a review for this order. Optional/undefined is treated the
-  // same as `false` (not yet reviewed) for orders created before this
-  // field existed.
   isReviewed?: boolean;
+  customerId?: string;
+  escrowStatus?: string;
 }
 
 export interface LocationFilter {

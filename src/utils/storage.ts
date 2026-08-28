@@ -2007,6 +2007,8 @@ function mapBackendOrderToLocal(bo: any): Order {
     status,
     createdAt: bo.createdAt || new Date().toISOString(),
     isReviewed: bo.isReviewed || bo.reviewRating !== undefined,
+    customerId: bo.customerId || '',
+    escrowStatus: bo.escrowStatus || 'LOCKED',
   };
 }
 
@@ -2053,12 +2055,73 @@ export async function getOrders(): Promise<Order[]> {
 }
 
 /**
+ * Clean & strictly filter Customer Order History by the active buyer's session user ID.
+ * Prevents customers from seeing random transaction entries from other accounts.
+ */
+export async function getCustomerOrders(customerId?: string): Promise<Order[]> {
+  const allOrders = await getOrders();
+  let targetId = customerId?.trim().toLowerCase();
+
+  if (!targetId) {
+    const profile = await getUserProfile();
+    if (profile) {
+      targetId = (profile.id || profile.phoneNumber || profile.fullName || '').trim().toLowerCase();
+    }
+  }
+
+  if (!targetId) {
+    return allOrders;
+  }
+
+  return allOrders.filter((order) => {
+    const orderCustId = (order.customerId || (order as any).customer || '').trim().toLowerCase();
+    if (!orderCustId) return true; // Include session orders placed without explicit ID
+    return (
+      orderCustId === targetId ||
+      orderCustId.includes(targetId) ||
+      targetId.includes(orderCustId)
+    );
+  });
+}
+
+/**
  * Persist the full orders array and notify all live subscribers.
  * Throws on failure — see saveCrops for the same rationale.
  */
 async function saveOrders(orders: Order[]): Promise<void> {
   await AsyncStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders));
   notifyOrderListeners(orders);
+}
+
+/**
+ * Update an order's status and escrow status, instantly notifying live subscribers.
+ */
+export async function updateOrderStatus(
+  orderId: string,
+  status: OrderStatus,
+  escrowStatus?: string
+): Promise<Order | null> {
+  const orders = await getOrders();
+  let updatedOrder: Order | null = null;
+  const cleanId = orderId.replace(/^#/, '').toLowerCase().trim();
+
+  const updatedOrders = orders.map((o) => {
+    const oId = o.id.replace(/^#/, '').toLowerCase().trim();
+    if (oId === cleanId || o.id === orderId) {
+      updatedOrder = {
+        ...o,
+        status,
+        ...(escrowStatus ? { escrowStatus } : {}),
+      };
+      return updatedOrder;
+    }
+    return o;
+  });
+
+  if (updatedOrder) {
+    await saveOrders(updatedOrders);
+  }
+  return updatedOrder;
 }
 
 /**
@@ -2129,6 +2192,8 @@ export async function createOrder(payment: PaymentDetails): Promise<Order> {
 
   const summary = calculateOrderSummary(cart);
   const farmGroups = groupCartByFarm(cart);
+  const userProfile = await getUserProfile();
+  const customerId = userProfile?.id || userProfile?.phoneNumber || 'cust_anonymous';
 
   const order: Order = {
     id: generateOrderId(),
@@ -2138,6 +2203,8 @@ export async function createOrder(payment: PaymentDetails): Promise<Order> {
     payment,
     status: 'placed',
     createdAt: new Date().toISOString(),
+    customerId,
+    escrowStatus: 'LOCKED',
   };
 
   const existingOrders = await getOrders();

@@ -17,6 +17,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { AdminTheme } from '../AdminTheme';
 import { adminApi } from '../../services/api';
+import { addNotification, updateOrderStatus } from '../../utils/storage';
 
 interface EscrowLedgerItem {
   masterPaymentIntentId: string;
@@ -83,9 +84,31 @@ export default function EscrowLogisticsTab() {
         currentItem.masterPaymentIntentId,
         'Admin manual transport loop override'
       );
+
+      // Instant local & cross-tab state synchronization
+      await updateOrderStatus(currentItem.orderId, 'delivered', 'RELEASED');
+
+      // Send live operational push notification to the receiving Farmer
+      await addNotification({
+        role: 'FARMER',
+        category: 'ORDER',
+        title: `💰 Escrow Funds Released: #${currentItem.orderId}`,
+        message: `Escrow payment of ${formatLKR(currentItem.totalHoldLKR)} for Order #${currentItem.orderId} has been successfully released and disbursed directly to your registered bank account.`,
+        body: `Escrow payment of ${formatLKR(currentItem.totalHoldLKR)} for Order #${currentItem.orderId} has been successfully released and disbursed directly to your registered bank account.`,
+      });
+
+      // Send confirmation notification to the Customer
+      await addNotification({
+        role: 'CUSTOMER',
+        category: 'ORDER',
+        title: `✅ Payment Released: #${currentItem.orderId}`,
+        message: `Order #${currentItem.orderId} delivery confirmed. Escrow payment of ${formatLKR(currentItem.totalHoldLKR)} has been released to the farmer.`,
+        body: `Order #${currentItem.orderId} delivery confirmed. Escrow payment of ${formatLKR(currentItem.totalHoldLKR)} has been released to the farmer.`,
+      });
+
       Alert.alert(
         'Funds Released',
-        `Escrow funds of ${formatLKR(currentItem.totalHoldLKR)} dispatched to farmer bank account.`
+        `Escrow funds of ${formatLKR(currentItem.totalHoldLKR)} successfully dispatched to farmer bank account.`
       );
       setLedger((prev) =>
         prev.map((it) =>
