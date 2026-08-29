@@ -438,6 +438,5 @@ docker run -p 5000:5000 --env-file .env ecoharvest-backend
 
 ## 📄 License & Acknowledgments
 
-Distributed under the **ISC License**. See [`LICENSE`](LICENSE) for more information.
 
 Developed with 💚 for Sri Lankan agriculture, empowering local farming communities through transparent, direct-to-consumer technology.
